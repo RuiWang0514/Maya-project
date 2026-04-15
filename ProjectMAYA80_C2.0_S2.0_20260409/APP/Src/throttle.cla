@@ -1,0 +1,281 @@
+#include "F28x_Project.h"
+// Include the test header file whose name is based on the test name
+// which is defined by the macro TEST on the command line
+#include "CLAShared.h"
+
+#include "F2837xD_gpio.h"
+#include "F2837xD_Cla_defines.h"
+
+//#define CLA_DEBUG 0
+uint32_t caltask,clatask;
+float cla_eCAPt1,cla_eCAPt2;
+uint32_t cla_eCAPT1,cla_eCAPT;
+float cla_cycle_time;
+float cla_eCAPdT;
+uint16_t cla_PROTOCOL;
+float cla_pulse_width;
+float cla_dshot_rcv_buffer1[16];
+uint16_t cla_rcv_countflg,cla_foc_rcv_count;
+//Uint16 cla_TimeCap;
+
+uint16_t cla_eCAPflag;
+uint32_t cla_dshot_rcv_count;
+
+uint16_t cla_ecapstartflag;
+uint16_t cla_iThrottle,cla_enTelemetry;
+
+uint32_t cla_dshot_rcv_buffer, cla_crc_pass_cnt, cla_crc_error_cnt, cla_crc_pass_pwm_cnt, cla_crc_error_pwm_cnt, cla_crc_ve_cnt, cla_crc_ve_pwm_cnt;
+
+
+void cla_Dshot_In_bit(uint16_t inbit);
+
+
+//interrupt void Cla1Task1 ( void )
+//{
+//
+////    caltask++;
+//}
+//
+////Task 2 : Calculate acos(X) using the assembly routine provided in
+//// acos_asm.asm
+//interrupt void Cla1Task2 ( void )
+//{
+////    GpioDataRegs.GPCSET.bit.GPIO85 = 1;
+//        #if (CLA_DEBUG==1)
+//        __mdebugstop();
+//        #endif
+//
+//        clatask++;
+////        cal_ecap3 = ECap1Regs.CAP1;
+////        cal_ecap4 = ECap1Regs.CAP2;
+//
+//        ECap1Regs.ECCLR.bit.CEVT2 = 1;
+//        ECap1Regs.ECCLR.bit.INT = 1;
+//        ECap1Regs.ECCTL2.bit.REARM = 1;//re-arm ECAP
+//
+//        cla_eCAPt1 = ECap1Regs.CAP1;
+//        cla_eCAPt2 = ECap1Regs.CAP2;
+//        cla_eCAPT1 = cla_eCAPt1 + cla_eCAPt2;
+//        cla_pulse_width = cla_eCAPt2;
+//        cla_eCAPdT = cla_eCAPT1-cla_eCAPT;
+//
+//        if(cla_PROTOCOL == cla_PROTOCOL_UNKNOW)
+//        {
+//            if ((cla_eCAPdT<1000) && (cla_eCAPdT>-1000))
+//                {
+//                cla_eCAPflag = 1;
+//                }
+//            else
+//                {
+//                cla_eCAPflag = 0;
+//                cla_eCAPT = cla_eCAPT1;
+//                }
+//            if (cla_eCAPflag == 1)
+//            {
+//                cla_cycle_time = cla_eCAPT1;
+//                if(cla_cycle_time > 1500) //if pulse width > 7500ns (1500*5) should be PWM mode
+//                    cla_PROTOCOL = cla_PROTOCOL_PWM;
+//                else if (cla_cycle_time > 1200 && cla_cycle_time < 1400) //dshot150 cycle time 6666.67ns
+//                    cla_PROTOCOL = cla_PROTOCOL_DSHOT150;
+//                else if (cla_cycle_time > 600 && cla_cycle_time < 700)   //dshot300 cycle time 3333.33ns
+//                    cla_PROTOCOL = cla_PROTOCOL_DSHOT300;
+//                else if (cla_cycle_time > 250 && cla_cycle_time < 400)   //dshot600 cycle time 1666.67ns
+//                    cla_PROTOCOL = cla_PROTOCOL_DSHOT600;
+//            }
+//        }
+//
+//        else if (cla_PROTOCOL == cla_PROTOCOL_PWM)
+//        {
+//            if ((cla_pulse_width > 180000) && (cla_pulse_width < 420000))  //check range : 1000us to 2000us
+//            {
+////                cla_iThrottle=cla_pulse_width;
+//                TimeCap = (int)((cla_pulse_width*5.0)/1000);
+//                cla_crc_pass_pwm_cnt++;
+//                cla_crc_ve_pwm_cnt = clatask - cla_crc_pass_pwm_cnt;
+//            }
+//            else cla_crc_error_pwm_cnt++;
+//        }
+//
+//        else /*(cla_PROTOCOL != cla_PROTOCOL_PWM)*/
+//        {
+//            if(cla_eCAPt1 > 8000)
+//            {
+//                cla_rcv_countflg=0;
+//                cla_dshot_rcv_count=0;
+//            }
+//        cla_dshot_rcv_buffer1[cla_dshot_rcv_count]=cla_eCAPt2;
+//        cla_dshot_rcv_count++;
+//        if(cla_dshot_rcv_count==16)
+//            {
+//            cla_rcv_countflg=1;
+//            cla_foc_rcv_count=0;
+//            }
+//        }
+//
+////        GpioDataRegs.GPCCLEAR.bit.GPIO85 = 1;
+////        Cla1ForceTask8();
+//        if(cla_rcv_countflg==1)
+//        {
+//        cla_rcv_countflg = 0;
+//        caltask++;
+//
+//    //    if(cla_PROTOCOL == cla_PROTOCOL_PWM)
+//    //    {
+//    //        if ((cla_pulse_width > 180000) && (cla_pulse_width < 420000))  //check range : 1000us to 2000us
+//    //        {
+//    //            cla_iThrottle=cla_pulse_width;
+//    //            TimeCap = (cla_iThrottle*5.0)/1000;
+//    //        }
+//    //    }
+//    //    else
+//    //    {
+//            while(cla_foc_rcv_count != 16)
+//            {
+//                switch(cla_PROTOCOL)
+//                {
+//                case cla_PROTOCOL_UNKNOW:
+//                    break;
+//                case cla_PROTOCOL_DSHOT150:
+//                    if (cla_dshot_rcv_buffer1[cla_foc_rcv_count] > 800) cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 1;
+//                    else cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 0;
+//                    break;
+//                case cla_PROTOCOL_DSHOT300:
+//                    if (cla_dshot_rcv_buffer1[cla_foc_rcv_count] > 400) cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 1;
+//                    else cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 0;
+//                    break;
+//                case cla_PROTOCOL_DSHOT600:
+//                    if (cla_dshot_rcv_buffer1[cla_foc_rcv_count] > 200) cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 1;
+//                    else cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 0;
+//                    break;
+//                default:
+//                    break;
+//               }
+//                cla_foc_rcv_count++;
+//            }
+//            if(cla_foc_rcv_count == 16 )
+//            {
+//                if(((((cla_dshot_rcv_buffer & 0xf000) >> 12) ^ ((cla_dshot_rcv_buffer & 0xf00) >> 8)) ^ ((cla_dshot_rcv_buffer & 0xf0) >> 4)) == (cla_dshot_rcv_buffer & 0xf))
+//                {
+//                    //if CRC success
+//                    cla_iThrottle = cla_dshot_rcv_buffer >> 5 ;
+//        //            cla_enTelemetry = (cla_dshot_rcv_buffer & 0x0010) >> 4;
+//                    TimeCap = (cla_iThrottle >>1) + 977;
+//        //            if(TimeCap < 1000) TimeCap = 1000;
+//        //            if(TimeCap > 1920) TimeCap = 1920;
+//                    TimeCap = (int)(TimeCap);
+//                    cla_crc_pass_cnt++;
+//                    cla_crc_ve_cnt = clatask - cla_crc_pass_cnt*16;
+//                }
+//                else cla_crc_error_cnt++;
+//                        cla_dshot_rcv_buffer = 0;
+//                        cla_ecapstartflag=0;
+//    //                    cla_rcv_countflg = 0;
+//                        cla_foc_rcv_count = 0;
+//            }
+//
+//        }
+//
+//
+//}
+//
+//interrupt void Cla1Task3 ( void )
+//{
+//
+//}
+//
+//interrupt void Cla1Task4 ( void )
+//{
+//
+//}
+//
+//interrupt void Cla1Task5 ( void )
+//{
+//
+//}
+//
+//interrupt void Cla1Task6 ( void )
+//{
+//
+//}
+//
+//interrupt void Cla1Task7 ( void )
+//{
+//
+//}
+//
+//interrupt void Cla1Task8 ( void )
+//{
+//
+////    GpioDataRegs.GPCSET.bit.GPIO85 = 1;
+////    cla_rcv_countflg = 0;
+////    caltask++;
+////
+//////    if(cla_PROTOCOL == cla_PROTOCOL_PWM)
+//////    {
+//////        if ((cla_pulse_width > 180000) && (cla_pulse_width < 420000))  //check range : 1000us to 2000us
+//////        {
+//////            cla_iThrottle=cla_pulse_width;
+//////            TimeCap = (cla_iThrottle*5.0)/1000;
+//////        }
+//////    }
+//////    else
+//////    {
+////        while(cla_foc_rcv_count != 16)
+////        {
+////            switch(cla_PROTOCOL)
+////            {
+////            case cla_PROTOCOL_UNKNOW:
+////                break;
+////            case cla_PROTOCOL_DSHOT150:
+////                if (cla_dshot_rcv_buffer1[cla_foc_rcv_count] > 800) cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 1;
+////                else cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 0;
+////                break;
+////            case cla_PROTOCOL_DSHOT300:
+////                if (cla_dshot_rcv_buffer1[cla_foc_rcv_count] > 400) cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 1;
+////                else cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 0;
+////                break;
+////            case cla_PROTOCOL_DSHOT600:
+////                if (cla_dshot_rcv_buffer1[cla_foc_rcv_count] > 200) cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 1;
+////                else cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | 0;
+////                break;
+////            default:
+////                break;
+////           }
+////            cla_foc_rcv_count++;
+////        }
+////        if(cla_foc_rcv_count == 16 )
+////        {
+////            if(((((cla_dshot_rcv_buffer & 0xf000) >> 12) ^ ((cla_dshot_rcv_buffer & 0xf00) >> 8)) ^ ((cla_dshot_rcv_buffer & 0xf0) >> 4)) == (cla_dshot_rcv_buffer & 0xf))
+////            {
+////                //if CRC success
+////                cla_iThrottle = cla_dshot_rcv_buffer >> 5 ;
+////    //            cla_enTelemetry = (cla_dshot_rcv_buffer & 0x0010) >> 4;
+////                TimeCap = (cla_iThrottle >>1) + 977;
+////    //            if(TimeCap < 1000) TimeCap = 1000;
+////    //            if(TimeCap > 1920) TimeCap = 1920;
+////                TimeCap = (int)(TimeCap);
+////                cla_crc_pass_cnt++;
+////            }
+////            else cla_crc_error_cnt++;
+////                    cla_dshot_rcv_buffer = 0;
+////                    cla_ecapstartflag=0;
+//////                    cla_rcv_countflg = 0;
+////                    cla_foc_rcv_count = 0;
+////        }
+//
+////    }
+////    GpioDataRegs.GPCCLEAR.bit.GPIO85 = 1;
+//}
+//
+//
+////void cla_Dshot_In_bit(Uint8 inbit)
+////{
+////
+////  if(cla_ecapstartflag==1)
+////   {
+////      cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | inbit;
+////      cla_dshot_rcv_count++;
+////   }
+////
+////}
+//// End of file
