@@ -13,17 +13,11 @@ extern "C" {
 // Including them in the shared header file makes them
 
 extern float Cla_angle;
-extern float Cla_angleB;
-extern float Cla_mech_angleB;
-//extern float Cla_angleB111;
-//extern float Cla_mech_angleB111;
+extern float Cla_ResolverElecTheta_pu;
+extern float Cla_ResolverMechTheta_pu;
+extern uint16_t Cla_AD2SB_Fault;
 __interrupt void Cla1Task1();
 __interrupt void Cla1Task2();
-//__interrupt void Cla1Task3();
-//__interrupt void Cla1Task4();
-//__interrupt void Cla1Task5();
-//__interrupt void Cla1Task6();
-//__interrupt void Cla1Task7();
 __interrupt void Cla1Task8();
 
 #define Cla_AD2SB_SAMPLE_H (GpioDataRegs.GPCSET.bit.GPIO64=1)
@@ -33,18 +27,9 @@ __interrupt void Cla1Task8();
 #define Cla_AD2SB_CS_H (GpioDataRegs.GPBSET.bit.GPIO59=1)
 #define Cla_AD2SB_CS_L (GpioDataRegs.GPBCLEAR.bit.GPIO59=1)
 
-void Cla_AD2SB_Write(uint16_t addr,uint16_t data);
 uint16_t Cla_AD2SB_Read(uint16_t addr);
-void Cla_AD2SB_Reset(void);
-uint16_t Cla_AD2SB_Postion_Read(void);
+uint16_t Cla_AD2SB_Position_Read(void);
 void Cla_delay(uint16_t);
-extern uint32_t cal_ecap1;
-extern uint32_t cal_ecap2;
-extern float Cla_ALIGN_ANGLE;
-extern uint32_t cal_ecap3;
-extern uint32_t cal_ecap4;
-extern uint16_t cla_rcv_countflg;
-extern float TimeCap;
 
 #define CLA_PROG_ENABLE      0x0001
 #define CLARAM0_ENABLE       0x0010
@@ -53,14 +38,6 @@ extern float TimeCap;
 #define CLA_RAM0CPUE         0x0100
 #define CLA_RAM1CPUE         0x0200
 #define CLA_RAM2CPUE         0x0400
-
-#define cla_Sysclock 5
-
-#define cla_PROTOCOL_UNKNOW     0
-#define cla_PROTOCOL_PWM        1
-#define cla_PROTOCOL_DSHOT150   2
-#define cla_PROTOCOL_DSHOT300   3
-#define cla_PROTOCOL_DSHOT600   4
 
 #ifdef __cplusplus
 }

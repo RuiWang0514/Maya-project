@@ -3,8 +3,7 @@
  * @brief   BSW Service - I2C low-level driver (I2Ca/I2Cb + GPIO bitbang)
  * @layer   BSW/Serve
  * @note    Contains hardware-level I2C peripheral init, read/write, ISR,
- *          and GPIO bitbang primitives. Application-level EEPROM operations
- *          are in APP/Src/i2cHandle.c.
+ *          and GPIO bitbang primitives.
  ******************************************************************************/
 #include "Servi2c.h"
 
@@ -29,8 +28,6 @@ struct I2CMSG I2cMsgIn1 = { I2C_MSGSTAT_INACTIVE,
                              I2C_EEPROM_LOW_ADDR };
 
 struct I2CMSG *CurrentMsgPtr;
-uint16_t PassCount;
-uint16_t FailCount;
 
 /******************************************************************************
  * @brief   Initialize I2Cb peripheral (GPIO mux, clock, FIFO)
@@ -250,68 +247,6 @@ int I2C_Wait_ack(void)
     return 0;
 }
 
-/* ========== I2Ca peripheral functions ========== */
-
-uint16_t I2CA_WriteData(struct I2CMSG *msg)
-{
-   uint16_t i;
-
-   if(I2caRegs.I2CMDR.bit.STP == 1)
-   {
-      return I2C_STP_NOT_READY_ERROR;
-   }
-
-   I2caRegs.I2CSAR.all = msg->SlaveAddress;
-
-   if(I2caRegs.I2CSTR.bit.BB == 1)
-   {
-      return I2C_BUS_BUSY_ERROR;
-   }
-
-   I2caRegs.I2CCNT = msg->NumOfBytes + 2;
-
-   I2caRegs.I2CDXR.all = msg->MemoryHighAddr;
-   I2caRegs.I2CDXR.all = msg->MemoryLowAddr;
-
-   for (i = 0; i < msg->NumOfBytes; i++)
-   {
-      I2caRegs.I2CDXR.all = *(msg->MsgBuffer + i);
-   }
-
-   I2caRegs.I2CMDR.all = 0x6E20;
-
-   return I2C_SUCCESS;
-}
-
-uint16_t I2CA_ReadData(struct I2CMSG *msg)
-{
-   if(I2caRegs.I2CMDR.bit.STP == 1)
-   {
-      return I2C_STP_NOT_READY_ERROR;
-   }
-
-   I2caRegs.I2CSAR.all = msg->SlaveAddress;
-
-   if(msg->MsgStatus == I2C_MSGSTAT_SEND_NOSTOP)
-   {
-      if(I2caRegs.I2CSTR.bit.BB == 1)
-      {
-         return I2C_BUS_BUSY_ERROR;
-      }
-      I2caRegs.I2CCNT = 2;
-      I2caRegs.I2CDXR.all = msg->MemoryHighAddr;
-      I2caRegs.I2CDXR.all = msg->MemoryLowAddr;
-      I2caRegs.I2CMDR.all = 0x2620;
-   }
-   else if(msg->MsgStatus == I2C_MSGSTAT_RESTART)
-   {
-      I2caRegs.I2CCNT = msg->NumOfBytes;
-      I2caRegs.I2CMDR.all = 0x2C20;
-   }
-
-   return I2C_SUCCESS;
-}
-
 /******************************************************************************
  * @brief   I2Cb interrupt handler - processes SCD and ARDY events
  * @note    Accesses CurrentMsgPtr, I2cMsgIn1, I2cMsgOut1 global message buffers
@@ -342,19 +277,6 @@ __interrupt void i2c_int1b_isr(void)
             {
               CurrentMsgPtr->MsgBuffer[i] = I2cbRegs.I2CDRR.all;
             }
-            {
-               for(i = 0; i < I2C_NUMBYTES; i++)
-               {
-                  if(I2cMsgIn1.MsgBuffer[i] == I2cMsgOut1.MsgBuffer[i])
-                  {
-                      PassCount++;
-                  }
-                  else
-                  {
-                      FailCount++;
-                  }
-               }
-            }
          }
        }
    }
@@ -372,20 +294,8 @@ __interrupt void i2c_int1b_isr(void)
    }
    else
    {
-      asm("   ESTOP0");
+      __asm("   ESTOP0");
    }
 
    PieCtrlRegs.PIEACK.all = PIEACK_GROUP8;
-}
-
-void pass(void)
-{
-   asm("   ESTOP0");
-   for(;;);
-}
-
-void fail(void)
-{
-   asm("   ESTOP0");
-   for(;;);
 }

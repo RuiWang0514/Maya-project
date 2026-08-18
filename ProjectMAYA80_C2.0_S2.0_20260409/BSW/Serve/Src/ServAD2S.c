@@ -50,7 +50,7 @@ void SPI_init(void)
 
 void SPIA_GPIO_Init(void)
 {
-    /* V2: empty �� SPIA for TLF35584 is configured in TLF35584_spi_init(); do not duplicate. */
+
 }
 
 
@@ -152,15 +152,12 @@ void SPI_fifo_init(void)
 
 uint16_t old_data_test=0;
 uint16_t old_dataB_test=0;
-uint16_t old_dataC_test=0;
 
 uint16_t new_data_test=0;
 uint16_t new_dataB_test=0;
-uint16_t new_dataC_test=0;
 
 uint16_t AD2S_Test_Ticker=0;
 uint16_t AD2SB_Test_Ticker=0;
-uint16_t AD2SC_Test_Ticker=0;
 
 void AD2S_Write(uint16_t addr,uint16_t data)
 {
@@ -231,7 +228,6 @@ void AD2S_Write_DA01(uint16_t addr){
     }
 }
 
-uint16_t dummy_data=0x00;
 uint16_t AD2S_Read(uint16_t addr)
 {
     uint16_t rxval;
@@ -296,9 +292,8 @@ uint16_t AD2SB_Speed_Read(){
 
 uint16_t AD2S_Fault;
 uint16_t AD2SB_Fault;
-uint16_t AD2SC_Fault;
 
-uint16_t AD2S_Postion_Read(){
+uint16_t AD2S_Position_Read(){
     uint16_t rxpos;
 
     rxpos = AD2S_Read(0x80);
@@ -308,7 +303,7 @@ uint16_t AD2S_Postion_Read(){
     return rxpos;
 }
 
-uint16_t AD2SB_Postion_Read(){
+uint16_t AD2SB_Position_Read(){
     uint16_t rxpos;
 
     rxpos = AD2SB_Read(0x80);
@@ -370,7 +365,6 @@ void AD2SB_Reset()
 
 uint16_t AD2S_Regs[10];
 uint16_t AD2SB_Regs[10];
-uint16_t AD2SC_Regs[10];
 
 void AD2S_Regs_Init()
 {
@@ -414,8 +408,8 @@ void AD2SB_Regs_Init()
 
     AD2SB_Write(0x92,0x7f);
     AD2SB_Write(0x91,0x28);//set resolver frequency to 10k
-    AD2SB_Write(0x8b,0x69);//DOS??��???? ?????38mv   3.99V
-    AD2SB_Write(0x8c,0x3c);//DOS??��??��???              2.28V
+    AD2SB_Write(0x8b,0x69);//DOS??ÃƒÂ¯Ã‚Â¿Ã‚Â½ÃƒÂ¯Ã‚Â¿Ã‚Â½???? ?????38mv   3.99V
+    AD2SB_Write(0x8c,0x3c);//DOS??ÃƒÂ¯Ã‚Â¿Ã‚Â½ÃƒÂ¯Ã‚Â¿Ã‚Â½??ÃƒÂ¯Ã‚Â¿Ã‚Â½ÃƒÂ¯Ã‚Â¿Ã‚Â½???              2.28V
     AD2SB_Write(0x88,0x3a);//LOS???                     2.204V
     AD2SB_Write(0x89,0x6c);//DOS????????                4.104V
     AD2SB_Write(0x8a,0x0a);//DOS????                  0.38V
@@ -452,32 +446,25 @@ void AD2SB_Regs_Init()
 
 _iq15  mech_angle;
 _iq15  mech_angleB;
-_iq15  mech_angleC;
 
 float ALIGN_ANGLE= 0.76;//Maya120 motor 023-1p,0.185-2p
 //Maya120 motor UNNC 0.79-2P
 int resolver_dir=0;//M60 motor
 int resolver_dirB=1;//Maya70V2 motor
-int resolver_dirC=0;//M120 motorC
 
 float angle16;
 float angle16B;
-float angle16C;
 
 
 _iq15 angle_tmp;
 _iq15 angle_tmpB;
-_iq15 angle_tmpC;
 
-float Eangle_resolver,M2_Eangle_resolver;
-float Eangle_resolverB,M2_Eangle_resolverB;
-float Eangle_resolverC,M2_Eangle_resolverC;
+float M1_ResolverElecTheta_pu;
+float Eangle_resolverC;
 
 uint32_t angle_raw=0;
 uint32_t angle_rawB=0;
-uint32_t angle_rawC=0;
 
-float m2_comp=-0.083333;
 
 void AD2S_Angle_cal(){
 
@@ -489,7 +476,7 @@ void AD2S_Angle_cal(){
         AD2S_Fault = AD2S_Read(0xff);
         AD2S_Test_Ticker=0;;
     }
-    angle_raw=AD2S_Postion_Read();
+    angle_raw=AD2S_Position_Read();
     mech_angle=_IQ15(((float)angle_raw)/65536.0);
     if(resolver_dir!=1)
     {
@@ -517,8 +504,7 @@ void AD2S_Angle_cal(){
     if((angle16>=_IQ15(0.0))&&(angle16<=_IQ15(1.0)))
     {
         correct_angle=angle16;
-        Eangle_resolver=correct_angle;
-        M2_Eangle_resolver =_IQ15frac(Eangle_resolver+m2_comp);  // M2 generated angle is based on M1 and offset value is 60deg(0.166667pu)
+        M1_ResolverElecTheta_pu=correct_angle;
     }
 
     AD2S_SAMPLE_H;
@@ -528,10 +514,7 @@ void AD2S_Angle_cal(){
     AD2S_SAMPLE_H;
     DELAY_US(1);
 }
-int AD2SB_Re = 0;
-int AD2SB_ticker = 0;
-
-int AD2SB_fault_ticker = 0;
+volatile int AD2SB_fault_ticker = 0;
 
 void AD2SB_Angle_cal()
 {
@@ -554,7 +537,7 @@ void AD2SB_Angle_cal()
         }
     }
 
-    angle_rawB=AD2SB_Postion_Read();
+    angle_rawB=AD2SB_Position_Read();
 
     mech_angleB=_IQ15(((float)angle_rawB)/65536.0);
     if(resolver_dirB!=1)
@@ -581,8 +564,7 @@ void AD2SB_Angle_cal()
     if((angle16B>=_IQ15(0.0))&&(angle16B<=_IQ15(1.0)))
     {
         correct_angleB=angle16B;
-        Eangle_resolverB=correct_angleB;
-        M2_Eangle_resolverB =_IQ15frac(Eangle_resolverB+m2_comp);  // M2 generated angle is based on M1 and offset value is 60deg(0.166667pu)
+        M1_ResolverElecTheta_pu=correct_angleB;
     }
 
     AD2SB_SAMPLE_H;

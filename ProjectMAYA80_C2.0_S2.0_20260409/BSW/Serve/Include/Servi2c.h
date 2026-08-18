@@ -3,8 +3,7 @@
  * @brief   BSW Service - I2C low-level driver interface (I2Ca/I2Cb + GPIO bitbang)
  * @layer   BSW/Serve
  * @note    Hardware-level I2C primitives for F2837xD I2Cb peripheral and
- *          GPIO-based software I2C (bitbang). Application-level EEPROM
- *          operations are in APP/Include/i2cHandle.h.
+ *          GPIO-based software I2C (bitbang).
  ******************************************************************************/
 #ifndef SERVI2C_H_
 #define SERVI2C_H_
@@ -27,8 +26,6 @@
 void   InitI2C(void);
 uint16_t I2CB_WriteData(struct I2CMSG *msg);
 uint16_t I2CB_ReadData(struct I2CMSG *msg);
-uint16_t I2CA_WriteData(struct I2CMSG *msg);
-uint16_t I2CA_ReadData(struct I2CMSG *msg);
 
 /* ---------- I2Cb interrupt handler ---------- */
 __interrupt void i2c_int1b_isr(void);
@@ -46,11 +43,5 @@ int    I2C_Wait_ack(void);
 extern struct I2CMSG  I2cMsgOut1;
 extern struct I2CMSG  I2cMsgIn1;
 extern struct I2CMSG *CurrentMsgPtr;
-extern uint16_t PassCount;
-extern uint16_t FailCount;
-
-/* ---------- Debug halt functions ---------- */
-void pass(void);
-void fail(void);
 
 #endif /* SERVI2C_H_ */

@@ -7,18 +7,12 @@
 #ifndef APP_INC_H_
 #define APP_INC_H_
 
-#include "CLAShared.h"
 #include "fault_detect.h"
 #include "canHandle.h"
-#include "telemetry.h"
+#include "MotorCtrl.h"
 #include "trip_zone.h"
 #include "Background_task.h"
-#include "pga411.h"
-#include "RemoteCommand.h"
-#include "remotecmd_decode.h"
-#include "SystemInit.h"
-#include "i2cHandle.h"
-
 #include "can.h"
+#include "pid_gain_schedule.h"   /* 转速分段线性插值 PID 增益调度 */
 
 #endif /* APP_INC_H_ */

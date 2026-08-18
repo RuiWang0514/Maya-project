@@ -1,0 +1,3 @@
+ROMS {
+all_mem: o = 0x108000, l = 0x18000, fill = 0xffff
+}

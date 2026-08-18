@@ -4,6 +4,6 @@
 	<deviceFamily value="C2000"/>
 	<isTargetManual value="true"/>
 	<connection value="common/targetdb/connections/TIXDS2XXUSB_Connection.xml"/>
-	<origin value="D:/CodeProject/Maya80_Layer1.0/ProjectMAYA80C_80M1V1.1_260326_shenglong"/>
 	<sourceLookupPath value=""/>
+	<origin value="D:/CodeProject/Maya80_Layer2.0/ProjectMAYA80_C2.0_S2.0_20260427"/>
 </projectOptions>

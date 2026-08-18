@@ -37,7 +37,7 @@ void InitTZGpio(void);
 void InitFaultGpio(void);
 void InitDigitalGPIO(void);
 void Fault_GPIO_init(void);
-void Fault_GPIO_Stateinit(void);
+void GateDriver_EnableOutputs(void);
 void Cla_GPIO_Init(void);
 
 

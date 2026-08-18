@@ -28,9 +28,9 @@ uint16_t AD2S_Speed_Read(void);
 uint16_t AD2SB_Speed_Read(void);
 //uint16_t AD2SC_Speed_Read(void);
 
-uint16_t AD2S_Postion_Read(void);
-uint16_t AD2SB_Postion_Read(void);
-//uint16_t AD2SC_Postion_Read(void);
+uint16_t AD2S_Position_Read(void);
+uint16_t AD2SB_Position_Read(void);
+//uint16_t AD2SC_Position_Read(void);
 
 void AD2S_Write_DA7F(uint16_t addr);
 

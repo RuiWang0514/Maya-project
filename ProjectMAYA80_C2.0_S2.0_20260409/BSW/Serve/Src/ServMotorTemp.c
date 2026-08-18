@@ -1,324 +1,223 @@
-/*
- * spi_resolver.c
- *
- *  Created on:
- *      Author: quop_
- */
+/******************************************************************************
+ * @file    ServMotorTemp.c
+ * @brief   BSW Serve - PT100 电机定子测温（4 路：PTA1/PTA2/PTB1/PTB2）
+ * @layer   BSW/Serve
+ * @note    内部一律 deg C 浮点；
+ *          块平均：累加 block_sum，满 PT100_AVG_BLOCK_LEN 算均值并复位，
+ *          块间保持上一块均值（与原 NTC_avg_P* 行为一致）。
+ ******************************************************************************/
 #include "HPMC_Settings.h"
 #include "ServMotorTemp.h"
 
-extern uint16_t DTC_code1;
-extern int NTC_motor_avg_buf;
-extern int NTC_motor_filter_buf;
+#define PT100_AVG_BLOCK_LEN  (100)   /* 保持原 NTC_motor_avg_buf 行为 */
 
-float Mea_PTA1,Mea_PTA2,Mea_PTB1,Mea_PTB2,Mea_PTC = 0.0;
-float Mea_PTB1_avg,Mea_PTB1_filter,Mea_PTB2_avg,Mea_PTB2_filter = 0.0;
-float Mea_PTA1_avg,Mea_PTC_avg,Mea_PTA1_filter,Mea_PTA2_avg,Mea_PTA2_filter,Mea_PTC_avg_filter = 0.0;
+/* 块平均内部状态（static，无需 buffer 数组：块平均只需 sum + count） */
+typedef struct {
+    float block_sum;
+    int   block_count;
+} PT100_BlockAvg_t;
 
-unsigned char NTC_temp_avg_buf_PTB1[100]={0};
-unsigned char NTC_temp_avg_buf_PTA1[100]={0};
-unsigned char NTC_temp_avg_buf_PTB2[100]={0};
-unsigned char NTC_temp_avg_buf_PTA2[100]={0};
-unsigned char NTC_temp_avg_buf_PTC[100]={0};
-unsigned char NTC_temp_filter_buf_PTB1[100]={0};
-unsigned char NTC_temp_filter_buf_PTB2[100]={0};
-float Mea_PTB_1_2_avg,Mea_PTA_1_2_avg,Mea_PTAB_1_2_avg,Mea_PTABC_avg;
-int motor_overtemp_ticker = 0;
-int motor_overtemp_flag = 0;
-int Mea_PTB1_avg_1,Mea_PTB2_avg_1 =0;
-int Mea_PTA1_avg_1,Mea_PTA2_avg_1 ,Mea_PTC_avg_1=0;
+PT100_BlockAvg_t pt100_pta1_avg, pt100_pta2_avg, pt100_ptb1_avg, pt100_ptb2_avg;
 
-uint16_t temp_motor_B;
-float tempB_value;
-uint32_t tempB_overtivker = 0;
-extern uint16_t AD2SB_Test_Ticker;
+/* 公开温度（deg C） */
+float PT100_PTA1_InstantC, PT100_PTA2_InstantC, PT100_PTB1_InstantC, PT100_PTB2_InstantC;
+float PT100_PTA1_AvgC,     PT100_PTA2_AvgC,     PT100_PTB1_AvgC,     PT100_PTB2_AvgC;
+float PT100_HottestAvgC;
 
+volatile uint16_t motor_overtemp_ticker = 0;
 
+/* 后台更新，供 ISR 读取；单位：允许最大 Iq 占 pu 满量程的百分比 [0,100] */
+static float motor_current_weaken_allowed_percent = 100.0f;
 
-uint16_t MAX6755C_READ(uint16_t addr)
+/* 静态函数前置声明 */
+static float PT100_AdcToTempC(uint16_t adc_result);
+static void  PT100_BlockAvgPush(PT100_BlockAvg_t *block_state,
+                                float sample_c,
+                                float *avg_out);
+float MotorCurrentWeaken_LinearPercent(float temp_c,
+                                       float start_temp_c,
+                                       float end_temp_c,
+                                       float start_percent,
+                                       float end_percent);
+#if MOTOR_OVERTEMP_ENABLE
+static int   Overtemp_MotorReadyForRestart(void);
+static void  MotorOvertemp_Update(void);
+#endif
+
+/******************************************************************************
+ * ADC 原始值 → PT100 电阻 → deg C
+ ******************************************************************************/
+static float PT100_AdcToTempC(uint16_t adc_result)
 {
-    uint16_t tempC;
-
-    SpicRegs.SPITXBUF=addr;
-    while(SpicRegs.SPIFFRX.bit.RXFFST!=1){};
-    tempC = (SpicRegs.SPIRXBUF);
-
-    return tempC;
-
-}
-uint16_t MAX6755A_READ1(uint16_t addr)
-{
-    uint16_t tempA;
-
-    SpiaRegs.SPITXBUF=(addr<<8);
-    while(SpiaRegs.SPIFFRX.bit.RXFFST!=1){};
-    tempA = (SpiaRegs.SPIRXBUF);
-    tempA <<=8;
-
-    SpiaRegs.SPITXBUF=(addr<<8);
-    while(SpiaRegs.SPIFFRX.bit.RXFFST!=1){};
-    tempA |= (SpiaRegs.SPIRXBUF);
-
-    return tempA;
-
+    float pt100_res = 33000.0f / (16.5f - 5.0f * 0.09456047f
+                                  - adc_result * 3.3f * ADC_PU_SCALE_FACTOR) - 2000.0f;
+    return (pt100_res - 100.0f) * 2.568845047266748869f;
 }
 
-
-
-uint16_t MAX6755C_READ2(uint16_t addr)
+/******************************************************************************
+ * 块平均：累加 block_sum，满 PT100_AVG_BLOCK_LEN 算均值写 *avg_out 并复位；
+ * 块间 *avg_out 保持上一块均值。
+ ******************************************************************************/
+static void PT100_BlockAvgPush(PT100_BlockAvg_t *block_state,
+                               float sample_c,
+                               float *avg_out)
 {
-    uint16_t tempC;
-
-    SpicRegs.SPITXBUF=(addr);
-    while(SpicRegs.SPIFFRX.bit.RXFFST!=1){};
-    tempC = (SpicRegs.SPIRXBUF);
-    tempC <<=8;
-
-    SpicRegs.SPITXBUF=(addr);
-    while(SpicRegs.SPIFFRX.bit.RXFFST!=1){};
-    tempC |= (SpicRegs.SPIRXBUF);
-    tempC = (SpicRegs.SPIRXBUF);
-    return tempC;
-
-}
-
-
-uint16_t temp_motor_1;
-uint16_t temp_motor_2;
-float temp1_value;
-float temp2_value;
-extern uint16_t AD2SC_Test_Ticker;
-uint16_t AD2SA_Test_Ticker;
-void MAX6755A_temp_cal()
-{
-    AD2SA_Test_Ticker++;
-    //TEMP1
-    TEMP1_CS_L;
-
-    temp_motor_1 = MAX6755A_READ1(0xff);
-
-    TEMP1_CS_H;
-
-    if(temp_motor_1 & 0x0004)
+    block_state->block_sum   += sample_c;
+    block_state->block_count += 1;
+    if (block_state->block_count >= PT100_AVG_BLOCK_LEN)
     {
-        temp_motor_1 = 4095;
+        *avg_out               = block_state->block_sum / (float)PT100_AVG_BLOCK_LEN;
+        block_state->block_sum   = 0.0f;
+        block_state->block_count = 0;
+    }
+}
+
+/******************************************************************************
+ * 线性插值百分比（过温电流削减用）
+ ******************************************************************************/
+float MotorCurrentWeaken_LinearPercent(float temp_c,
+                                       float start_temp_c,
+                                       float end_temp_c,
+                                       float start_percent,
+                                       float end_percent)
+{
+    if (end_temp_c <= start_temp_c)
+    {
+        if (temp_c >= end_temp_c)
+        {
+            return end_percent;
+        }
+        return start_percent;
     }
 
-    else
+    if (temp_c <= start_temp_c)
     {
-        temp_motor_1 = temp_motor_1 & 0x3FFF;
-        temp_motor_1 = temp_motor_1>>3;
+        return start_percent;
+    }
+    if (temp_c >= end_temp_c)
+    {
+        return end_percent;
     }
 
-    temp_motor_1 = temp_motor_1 &0x0fff;
+    return start_percent + ((temp_c - start_temp_c) / (end_temp_c - start_temp_c))
+           * (end_percent - start_percent);
+}
 
-    temp1_value = (float)(temp_motor_1*1024.0)/4095.0;
-    //TEMP2
-    TEMP2_CS_L;
+/******************************************************************************
+ * 电机 PT100 过温电流削减：根据最热平均温度更新允许电流百分比
+ ******************************************************************************/
+void MotorCurrentWeaken_Update(void)
+{
+#if TEMPERATURE_CURRENT_WEAKEN_ENABLE
+    float motor_temp_c = PT100_HottestAvgC;
 
-    temp_motor_2 = MAX6755A_READ1(0xff);
+    motor_current_weaken_allowed_percent = MotorCurrentWeaken_LinearPercent(
+        motor_temp_c,
+        MOTOR_CURRENT_WEAKEN_START_TEMPERATURE_C,
+        MOTOR_CURRENT_WEAKEN_END_TEMPERATURE_C,
+        MOTOR_CURRENT_WEAKEN_START_PERCENT,
+        MOTOR_CURRENT_WEAKEN_END_PERCENT);
+#else
+    motor_current_weaken_allowed_percent = 100.0f;
+#endif
+}
 
-    TEMP2_CS_H;
+float MotorCurrentWeaken_GetAllowedPercent(void)
+{
+    return motor_current_weaken_allowed_percent;
+}
 
-    if(temp_motor_2 & 0x0004)
+/******************************************************************************
+ * 过温故障判定与清除
+ ******************************************************************************/
+#if MOTOR_OVERTEMP_ENABLE
+static int Overtemp_MotorReadyForRestart(void)
+{
+    return (PT100_HottestAvgC < MOTOR_OVERTEMP_CLEAR_C);
+}
+
+static void MotorOvertemp_Update(void)
+{
+    if (fault_motor_overtemp == 0)
     {
-        temp_motor_2 = 4095;
-    }
+        if (PT100_HottestAvgC > MOTOR_OVERTEMP_TRIP_C)
+        {
+            motor_overtemp_ticker++;
 
-    else
-    {
-        temp_motor_2 = temp_motor_2>>3;
-    }
-
-    temp_motor_2 = temp_motor_2 &0x0fff;
-
-    temp2_value = (float)(temp_motor_2*1024.0)/4095.0;
-
-}
-
-extern int PTA1, PTA2, PTB1, PTB2, PTC;
-
-float PT100_measurement(uint16_t adcresult)
-{
-    float pt100_temp = 0.0;
-    float pt100_res  = 0.0;
-    pt100_res=33000.0/(16.5-5.0*0.09456047-adcresult*3.3*ADC_PU_SCALE_FACTOR)-2000;
-    pt100_temp=(pt100_res-100)*2.568845047266748869;
-    return pt100_temp;
-}
-
- int NTC_a_i_PTB1 = 0;
- float NTC_sum_avg_PTB1 = 0.0;
- float NTC_avg_PTB1_temp =0.0;
-float NTC_avg_PTB1(int NTC_SIC_temp_int)
-{
-    NTC_temp_avg_buf_PTB1[NTC_a_i_PTB1] = NTC_SIC_temp_int;
-    NTC_sum_avg_PTB1 =NTC_sum_avg_PTB1 + NTC_temp_avg_buf_PTB1[NTC_a_i_PTB1];
-    NTC_a_i_PTB1++;
-
-    if(NTC_a_i_PTB1 == NTC_motor_avg_buf)
-    {
-        NTC_a_i_PTB1 = 0;
-        NTC_avg_PTB1_temp = NTC_sum_avg_PTB1/NTC_motor_avg_buf;
-        NTC_sum_avg_PTB1 = 0;
-    }
-    return NTC_avg_PTB1_temp;
-}
-
-int NTC_f_i_PTB1 = 0;
-float NTC_filter_PTB1(int NTC_SIC_temp_int)
-{
-    int NTC_sum_PTB1 = 0;
-    int NTC_count_PTB1;
-    NTC_temp_filter_buf_PTB1[NTC_f_i_PTB1] = NTC_SIC_temp_int;
-    NTC_f_i_PTB1++;
-
-    if(NTC_f_i_PTB1 == NTC_motor_filter_buf)
-    {
-        NTC_f_i_PTB1 = 0;
-    }
-    for(NTC_count_PTB1=0;NTC_count_PTB1<NTC_motor_filter_buf;NTC_count_PTB1++)
-    {
-        NTC_sum_PTB1 =NTC_sum_PTB1 + NTC_temp_filter_buf_PTB1[NTC_count_PTB1];
-    }
-
-    return (float)(NTC_sum_PTB1)/NTC_motor_filter_buf;
-}
-
-int NTC_a_i_PTB2 = 0;
-float NTC_sum_avg_PTB2 = 0.0;
-float NTC_avg_PTB2_temp =0.0;
-float NTC_avg_PTB2(int NTC_SIC_temp_int)
-{
-   NTC_temp_avg_buf_PTB2[NTC_a_i_PTB2] = NTC_SIC_temp_int;
-   NTC_sum_avg_PTB2 =NTC_sum_avg_PTB2 + NTC_temp_avg_buf_PTB2[NTC_a_i_PTB2];
-   NTC_a_i_PTB2++;
-
-   if(NTC_a_i_PTB2 == NTC_motor_avg_buf)
-   {
-       NTC_a_i_PTB2 = 0;
-       NTC_avg_PTB2_temp = NTC_sum_avg_PTB2/NTC_motor_avg_buf;
-       NTC_sum_avg_PTB2 = 0;
-   }
-   return NTC_avg_PTB2_temp;
-}
-
-int NTC_f_i_PTB2 = 0;
-float NTC_filter_PTB2(int NTC_SIC_temp_int)
-{
-   int NTC_sum_PTB2 = 0;
-   int NTC_count_PTB2;
-   NTC_temp_filter_buf_PTB2[NTC_f_i_PTB2] = NTC_SIC_temp_int;
-   NTC_f_i_PTB2++;
-
-   if(NTC_f_i_PTB2 == NTC_motor_filter_buf)
-   {
-       NTC_f_i_PTB2 = 0;
-   }
-   for(NTC_count_PTB2=0;NTC_count_PTB2<NTC_motor_filter_buf;NTC_count_PTB2++)
-   {
-       NTC_sum_PTB2 =NTC_sum_PTB2 + NTC_temp_filter_buf_PTB2[NTC_count_PTB2];
-   }
-
-   return (float)(NTC_sum_PTB2)/NTC_motor_filter_buf;
-}
-int NTC_a_i_PTA1 = 0;
-float NTC_sum_avg_PTA1 = 0.0;
-float NTC_avg_PTA1_temp =0.0;
-float NTC_avg_PTA1(int NTC_SIC_temp_int)
-{
-    NTC_temp_avg_buf_PTA1[NTC_a_i_PTA1] = NTC_SIC_temp_int;
-    NTC_sum_avg_PTA1 =NTC_sum_avg_PTA1 + NTC_temp_avg_buf_PTA1[NTC_a_i_PTA1];
-    NTC_a_i_PTA1++;
-
-    if(NTC_a_i_PTA1 == NTC_motor_avg_buf)
-    {
-        NTC_a_i_PTA1 = 0;
-        NTC_avg_PTA1_temp = NTC_sum_avg_PTA1/NTC_motor_avg_buf;
-        NTC_sum_avg_PTA1 = 0;
-    }
-    return NTC_avg_PTA1_temp;
-}
-
-int NTC_a_i_PTA2 = 0;
-float NTC_sum_avg_PTA2 = 0.0;
-float NTC_avg_PTA2_temp =0.0;
-float NTC_avg_PTA2(int NTC_SIC_temp_int)
-{
-    NTC_temp_avg_buf_PTA2[NTC_a_i_PTA2] = NTC_SIC_temp_int;
-    NTC_sum_avg_PTA2 =NTC_sum_avg_PTA2 + NTC_temp_avg_buf_PTA2[NTC_a_i_PTA2];
-    NTC_a_i_PTA2++;
-
-    if(NTC_a_i_PTA2 == NTC_motor_avg_buf)
-    {
-        NTC_a_i_PTA2 = 0;
-        NTC_avg_PTA2_temp = NTC_sum_avg_PTA2/NTC_motor_avg_buf;
-        NTC_sum_avg_PTA2 = 0;
-    }
-    return NTC_avg_PTA2_temp;
-}
-
-
-int NTC_a_i_PTC = 0;
-float NTC_sum_avg_PTC = 0.0;
-float NTC_avg_PTC_temp =0.0;
-float NTC_avg_PTC(int NTC_SIC_temp_int)
-{
-   NTC_temp_avg_buf_PTC[NTC_a_i_PTC] = NTC_SIC_temp_int;
-   NTC_sum_avg_PTC =NTC_sum_avg_PTC + NTC_temp_avg_buf_PTC[NTC_a_i_PTC];
-   NTC_a_i_PTC++;
-
-   if(NTC_a_i_PTC == NTC_motor_avg_buf)
-   {
-       NTC_a_i_PTC = 0;
-       NTC_avg_PTC_temp = NTC_sum_avg_PTC/NTC_motor_avg_buf;
-       NTC_sum_avg_PTC = 0;
-   }
-   return NTC_avg_PTC_temp;
-}
-
-void PT100_temp(void)
-{
-    Mea_PTA1 = (int)(PT100_measurement(Mea_PTA1_Raw))+40;
-    PTA1 = Mea_PTA1;
-    Mea_PTA2 = (int)(PT100_measurement(Mea_PTA2_Raw))+40;
-    PTA2 = Mea_PTA2;
-    Mea_PTB1 = (int)(PT100_measurement(Mea_PTB1_Raw))+40;
-    PTB1 = Mea_PTB1;
-    Mea_PTB2 = (int)(PT100_measurement(Mea_PTB2_Raw))+40;
-    PTB2 = Mea_PTB2;
-
-    Mea_PTA1_avg = NTC_avg_PTA1(Mea_PTA1) - 40;
-    Mea_PTA1_avg_1 = (int)(Mea_PTA1_avg + 40);
-
-    Mea_PTB1_avg = NTC_avg_PTB1(Mea_PTB1) - 40;
-    Mea_PTB1_avg_1 = (int)(Mea_PTB1_avg + 40);
-
-    Mea_PTA2_avg = NTC_avg_PTA2(Mea_PTA2) - 40;
-    Mea_PTA2_avg_1 = (int)(Mea_PTA2_avg + 40);
-
-    Mea_PTB2_avg = NTC_avg_PTB2(Mea_PTB2) - 40;
-    Mea_PTB2_avg_1 = (int)(Mea_PTB2_avg + 40);
-
-    Mea_PTC_avg_1 = 0;
-
-    Mea_PTB_1_2_avg = Mea_PTB1_avg_1 > Mea_PTB2_avg_1 ? Mea_PTB1_avg_1 : Mea_PTB2_avg_1;
-    Mea_PTA_1_2_avg = Mea_PTA1_avg_1 > Mea_PTA2_avg_1 ? Mea_PTA1_avg_1 : Mea_PTA2_avg_1;
-    Mea_PTAB_1_2_avg = Mea_PTB_1_2_avg > Mea_PTA_1_2_avg ? Mea_PTB_1_2_avg : Mea_PTA_1_2_avg;
-    Mea_PTABC_avg = Mea_PTAB_1_2_avg > Mea_PTC_avg_1 ? Mea_PTAB_1_2_avg : Mea_PTC_avg_1;
-
-    if(Mea_PTABC_avg > 190.0)
-    {
-        motor_overtemp_ticker++;
+            if (motor_overtemp_ticker >= OVERTEMP_MOTOR_FAULT_CONFIRM)
+            {
+                fault_motor_overtemp = 1;
+                DTC_code1 |= FAULT_DTC_MOTOR_OVERTEMP;
+            }
+        }
+        else
+        {
+            motor_overtemp_ticker = 0;
+        }
     }
     else
     {
         motor_overtemp_ticker = 0;
     }
-    if(motor_overtemp_ticker>2)
-    {
-        motor_overtemp_flag = 1;
-        DTC_code1 |=0x20;
-    }
 }
 
+void Overtemp_MotorClearFaultsOnRestart(void)
+{
+    if (fault_motor_overtemp == 0 && (DTC_code1 & FAULT_DTC_MOTOR_OVERTEMP) == 0u)
+    {
+        return;
+    }
+
+    if (!Overtemp_MotorReadyForRestart())
+    {
+        return;
+    }
+
+    fault_motor_overtemp = 0;
+    motor_overtemp_ticker = 0;
+    DTC_code1 &= (uint16_t)~FAULT_DTC_MOTOR_OVERTEMP;
+}
+#else
+void Overtemp_MotorClearFaultsOnRestart(void)
+{
+}
+#endif
+
+/******************************************************************************
+ * PT100 后台刷新：ADC 采样 → deg C → 块平均 → 最热点 → 过温判定 → 电流削减
+ ******************************************************************************/
+void PT100_temp(void)
+{
+    /* 1. 瞬时温度（deg C） */
+    PT100_PTA1_InstantC = PT100_AdcToTempC(Mea_PTA1_Raw);
+    PT100_PTA2_InstantC = PT100_AdcToTempC(Mea_PTA2_Raw);
+    PT100_PTB1_InstantC = PT100_AdcToTempC(Mea_PTB1_Raw);
+//    PT100_PTB2_InstantC = PT100_AdcToTempC(Mea_PTB2_Raw);
+    PT100_PTB2_InstantC = 0;
+
+    /* 2. 块平均（deg C，块末更新、块间保持） */
+    PT100_BlockAvgPush(&pt100_pta1_avg, PT100_PTA1_InstantC, &PT100_PTA1_AvgC);
+    PT100_BlockAvgPush(&pt100_pta2_avg, PT100_PTA2_InstantC, &PT100_PTA2_AvgC);
+    PT100_BlockAvgPush(&pt100_ptb1_avg, PT100_PTB1_InstantC, &PT100_PTB1_AvgC);
+//    PT100_BlockAvgPush(&pt100_ptb2_avg, PT100_PTB2_InstantC, &PT100_PTB2_AvgC);
+    PT100_PTB2_AvgC = 0;
+
+    /* 3. 最热平均温度（4 路取最大） */
+    PT100_HottestAvgC = PT100_PTA1_AvgC;
+    if (PT100_PTA2_AvgC > PT100_HottestAvgC) PT100_HottestAvgC = PT100_PTA2_AvgC;
+    if (PT100_PTB1_AvgC > PT100_HottestAvgC) PT100_HottestAvgC = PT100_PTB1_AvgC;
+    if (PT100_PTB2_AvgC > PT100_HottestAvgC) PT100_HottestAvgC = PT100_PTB2_AvgC;
+
+    /* 4. 过温判定 + 电流削减更新 */
+#if MOTOR_OVERTEMP_ENABLE
+    MotorOvertemp_Update();
+#else
+    motor_overtemp_ticker = 0;
+    if (fault_motor_overtemp != 0)
+    {
+        fault_motor_overtemp = 0;
+        DTC_code1 &= (uint16_t)~FAULT_DTC_MOTOR_OVERTEMP;
+    }
+#endif
+    MotorCurrentWeaken_Update();
+}

@@ -33,11 +33,8 @@
 #include "volt_calc_027.h"
 
 
-#include "DLOG_4CH_F.h"
-
 #include "esmopos.h"
 #include "fast_math.h"
-#include "Linear_Conversion.h"
 
 
 #endif /* USER_HPMC_ALGO_INCLUDES_H_ */

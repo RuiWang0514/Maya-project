@@ -11,6 +11,7 @@
 #include "ServECap.h"
 #include "Servi2c.h"
 #include "ServMotorTemp.h"
+#include "ServMotorCan.h"
 #include "ServNTCTemp.h"
 #include "ServSysTick.h"
 

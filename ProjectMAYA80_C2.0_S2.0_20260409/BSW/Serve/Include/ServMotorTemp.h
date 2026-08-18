@@ -1,52 +1,35 @@
-/*
- * spi_resolver.h
- *
- *  Created on: 2020?5?4?
- *      Author: quop_
- */
+#ifndef SERVMOTORTEMP_H_
+#define SERVMOTORTEMP_H_
 
 #include "F28x_Project.h"
-
 #include "HPMC_Settings.h"
 
+/* PT100 电机定子测温 —— 4 路（PTA1/PTA2/PTB1/PTB2），PTC 硬件已移除。
+ * 内部 deg C 浮点；CAN 发送方在赋值处自行 +40 编码为无符号字节。 */
 
-#define TEMP1_CS_H (GpioDataRegs.GPBSET.bit.GPIO57=1)
-#define TEMP1_CS_L (GpioDataRegs.GPBCLEAR.bit.GPIO57=1)
-#define TEMP2_CS_H (GpioDataRegs.GPBSET.bit.GPIO62=1)
-#define TEMP2_CS_L (GpioDataRegs.GPBCLEAR.bit.GPIO62=1)
+/* 4 路瞬时温度（deg C），每次 PT100_temp() 刷新 */
+extern float PT100_PTA1_InstantC;
+extern float PT100_PTA2_InstantC;
+extern float PT100_PTB1_InstantC;
+extern float PT100_PTB2_InstantC;
 
-uint16_t MAX6755B_READ(uint16_t addr);
+/* 4 路块平均温度（deg C），块末更新、块间保持 */
+extern float PT100_PTA1_AvgC;
+extern float PT100_PTA2_AvgC;
+extern float PT100_PTB1_AvgC;
+extern float PT100_PTB2_AvgC;
 
-void MAX6755B_temp_cal(void);
+/* 4 路中最热平均温度（deg C），供过温判定/电流削减，PT100_temp() 刷新 */
+extern float PT100_HottestAvgC;
 
-uint16_t MAX6755C_READ(uint16_t addr);
-uint16_t MAX6755A_READ1(uint16_t addr);
-uint16_t MAX6755C_READ2(uint16_t addr);
-void MAX6755A_temp_cal(void);
+/* 后台刷新：ADC 采样 → deg C → 块平均 → 最热点 → 过温判定 → 电流削减更新 */
+void  PT100_temp(void);
 
-/* PT100 五路电机测温（由 ServMotorTemp.c 实现） */
-void PT100_temp(void);
-float PT100_measurement(uint16_t adcresult);
-float NTC_avg_PTB1(int NTC_SIC_temp_int);
-float NTC_avg_PTB2(int NTC_SIC_temp_int);
-float NTC_avg_PTA1(int NTC_SIC_temp_int);
-float NTC_avg_PTA2(int NTC_SIC_temp_int);
-float NTC_avg_PTC(int NTC_SIC_temp_int);
-float NTC_filter_PTB1(int NTC_SIC_temp_int);
-float NTC_filter_PTB2(int NTC_SIC_temp_int);
+/* 过温故障清除（重启序列调用） */
+void  Overtemp_MotorClearFaultsOnRestart(void);
 
-extern float Mea_PTA1, Mea_PTA2, Mea_PTB1, Mea_PTB2, Mea_PTC;
-extern int Mea_PTA1_avg_1, Mea_PTA2_avg_1, Mea_PTB1_avg_1, Mea_PTB2_avg_1, Mea_PTC_avg_1;
-extern int motor_overtemp_flag;
+/* 电机 PT100 过温电流削减：后台 PT100_temp() 刷新后更新，ISR 只读 AllowedPercent */
+void  MotorCurrentWeaken_Update(void);
+float MotorCurrentWeaken_GetAllowedPercent(void);
 
-
-
-
-
-
-
-
-
-
-
-
+#endif /* SERVMOTORTEMP_H_ */

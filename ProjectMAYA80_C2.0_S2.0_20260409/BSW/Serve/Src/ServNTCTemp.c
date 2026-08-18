@@ -1,404 +1,199 @@
-/*
- * spi_resolver.c
- *
-
- *      Author: quop_
- */
+/******************************************************************************
+ * @file    ServNTCTemp.c
+ * @brief   BSW Serve - SiC 栅极 NTC 测温
+ * @layer   BSW/Serve
+ * @note    内部一律 deg C 浮点；
+ *          过温判定用瞬时任意路SiC温度超限（快结温保护，不走平均——与 PT100 的 avg-based
+ *          不同，属物理差异）。电流削减用 6 路最热温度。
+ ******************************************************************************/
 #include "HPMC_Settings.h"
 #include "ServNTCTemp.h"
 
-float NTC_SIC_M1A,NTC_SIC_M1B,NTC_SIC_M1C,NTC_SIC_M2A,NTC_SIC_M2B,NTC_SIC_M2C = 0;
-float NTC_SIC_M1A_ECAP,NTC_SIC_M1B_ECAP,NTC_SIC_M1C_ECAP = 0;
-float NTC_SIC_M1A1,NTC_SIC_M1B1,NTC_SIC_M1C1,NTC_SIC_M2A1,NTC_SIC_M2B1,NTC_SIC_M2C1 = 0.0;
+/* 6 路结温（deg C），相温名保持不变 */
+float NTC_SIC_M1A, NTC_SIC_M1B, NTC_SIC_M1C;
+float NTC_SIC_M1A_ECAP, NTC_SIC_M1B_ECAP, NTC_SIC_M1C_ECAP;
 
-int NTC_filter_buf = 10;
-int NTC_motor_avg_buf = 100;
-int NTC_motor_filter_buf = 100;
-unsigned char NTC_temp_buf[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_buf_A1[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_buf_B1[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_buf_C1[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_buf_A2[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_buf_B2[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_buf_C2[10]={0,0,0,0,0,0,0,0,0,0};
-unsigned char NTC_temp_avg[10]={0,0,0,0,0,0,0,0,0,0};
+/* 聚合量（deg C），M1 风格命名 */
+float NTC_SIC_M1_AvgC;       /* 三相 ADC 算术均值，CAN 上报 */
+float NTC_SIC_M1_HottestC;   /* 6 路最热，供电流削减 */
 
-extern uint16_t DTC_code1;
+volatile uint16_t SiC_over_temp_ticker = 0;
 
-int NTC_f_i_A1 = 0;
-int NTC_f_i_B1 = 0;
-int NTC_f_i_C1 = 0;
-int NTC_f_i_A2 = 0;
-int NTC_f_i_B2 = 0;
-int NTC_f_i_C2 = 0;
-int NTC_f_i_avg = 0;
-float NTC_SIC_avg = 0.0;
-float NTC_SIC_avg_filter = 0.0;
-float NTC_SIC_avg_filter1 = 0.0;
-float NTC_SIC_avg_ECAP = 0.0;
-float NTC_SIC_avg_filter_ECAP = 0.0;
-float NTC_SIC_avg_filter1_ECAP = 0.0;
-extern int over_avg_temp_flag;
-extern int over_temp_ticker;
-extern float SIC_MAX_TEMP;
-void NTC_temp()
+/* 后台更新，供 ISR 读取；单位：允许最大 Iq 占 pu 满量程的百分比 [0,100] */
+static float sic_current_weaken_allowed_percent = 100.0f;
+
+/* 静态函数前置声明 */
+static float NTC_SIC_AdcToTempC(uint16_t adc_result);
+static float NTC_SIC_EcapDutyToTempC(float duty);
+float SicCurrentWeaken_LinearPercent(float temp_c,
+                                     float start_temp_c,
+                                     float end_temp_c,
+                                     float start_percent,
+                                     float end_percent);
+static int   NTC_SIC_AnyPhaseOverTrip(void);
+static int   Overtemp_SicReadyForRestart(void);
+static void  NTC_SIC_OvertempUpdate(void);
+
+/******************************************************************************
+ * ADC 原始值 → NTC 电阻 → deg C（原 NTC_SIC_temp5）
+ ******************************************************************************/
+static float NTC_SIC_AdcToTempC(uint16_t adc_result)
 {
+    float ntc_res = ((330.0f * 0.8846f) / (0.8846f - adc_result * 3.3f * ADC_PU_SCALE_FACTOR)
+                     - 330.0f) * 0.001f;
+    float term2 = (1.0f / 3436.0f) * logf(ntc_res / 5.0f);
+    return 1.0f / (0.003354f + term2) - 273.15f;
+}
 
-    NTC_SIC_M1A = (int)(NTC_SIC_temp5(M1_Temp_PhaseA_Raw));
-    NTC_SIC_M1B = (int)(NTC_SIC_temp5(M1_Temp_PhaseB_Raw));
-    NTC_SIC_M1C = (int)(NTC_SIC_temp5(M1_Temp_PhaseC_Raw));
+/******************************************************************************
+ * ECAP 占空比 → NTC 电阻 → deg C（原 NTC_duty_measurement80）
+ ******************************************************************************/
+static float NTC_SIC_EcapDutyToTempC(float duty)
+{
+    float temp_vol = 0.8f * duty + 0.1f;
+    float ntc_res = ((330.0f * 0.8846f) / (0.8846f - temp_vol) - 330.0f) * 0.001f;
+    float term2 = (1.0f / 3436.0f) * logf(ntc_res / 5.0f);
+    return 1.0f / (0.003354f + term2) - 273.15f;
+}
 
-
-    NTC_SIC_M1A_ECAP = (int)(NTC_duty_measurement80(ECAP1_duty));
-    NTC_SIC_M1B_ECAP = (int)(NTC_duty_measurement80(ECAP2_duty));
-    NTC_SIC_M1C_ECAP = (int)(NTC_duty_measurement80(ECAP3_duty));
-
-    NTC_SIC_avg = (NTC_SIC_M1A+NTC_SIC_M1B+NTC_SIC_M1C)/3.0;
-    NTC_SIC_avg_filter1 = NTC_SIC_avg;
-
-    NTC_SIC_avg_ECAP = (NTC_SIC_M1A_ECAP+NTC_SIC_M1B_ECAP+NTC_SIC_M1C_ECAP)/3.0+40;
-    NTC_SIC_avg_filter1_ECAP = NTC_SIC_avg_ECAP;
-
-
-    if(NTC_SIC_M1A>SIC_MAX_TEMP||NTC_SIC_M1B>SIC_MAX_TEMP||NTC_SIC_M1C>SIC_MAX_TEMP||
-       NTC_SIC_M1A_ECAP>SIC_MAX_TEMP||NTC_SIC_M1B_ECAP>SIC_MAX_TEMP||NTC_SIC_M1C_ECAP>SIC_MAX_TEMP)
+/******************************************************************************
+ * 线性插值百分比（过温电流削减用）
+ ******************************************************************************/
+float SicCurrentWeaken_LinearPercent(float temp_c,
+                                     float start_temp_c,
+                                     float end_temp_c,
+                                     float start_percent,
+                                     float end_percent)
+{
+    if (end_temp_c <= start_temp_c)
     {
-        over_temp_ticker++;
+        if (temp_c >= end_temp_c)
+        {
+            return end_percent;
+        }
+        return start_percent;
+    }
+
+    if (temp_c <= start_temp_c)
+    {
+        return start_percent;
+    }
+    if (temp_c >= end_temp_c)
+    {
+        return end_percent;
+    }
+
+    return start_percent + ((temp_c - start_temp_c) / (end_temp_c - start_temp_c))
+           * (end_percent - start_percent);
+}
+
+/******************************************************************************
+ * SiC NTC 过温电流削减：根据 6 路最热温度更新允许电流百分比
+ ******************************************************************************/
+void SicCurrentWeaken_Update(void)
+{
+#if TEMPERATURE_CURRENT_WEAKEN_ENABLE
+    float temp_c = NTC_SIC_M1_HottestC;
+
+    sic_current_weaken_allowed_percent = SicCurrentWeaken_LinearPercent(
+        temp_c,
+        SIC_CURRENT_WEAKEN_START_TEMPERATURE_C,
+        SIC_CURRENT_WEAKEN_END_TEMPERATURE_C,
+        SIC_CURRENT_WEAKEN_START_PERCENT,
+        SIC_CURRENT_WEAKEN_END_PERCENT);
+#else
+    sic_current_weaken_allowed_percent = 100.0f;
+#endif
+}
+
+float SicCurrentWeaken_GetAllowedPercent(void)
+{
+    return sic_current_weaken_allowed_percent;
+}
+
+/******************************************************************************
+ * 过温故障判定与清除
+ ******************************************************************************/
+static int NTC_SIC_AnyPhaseOverTrip(void)
+{
+    return (NTC_SIC_M1A > SIC_OVERTEMP_TRIP_C ||
+            NTC_SIC_M1B > SIC_OVERTEMP_TRIP_C ||
+            NTC_SIC_M1C > SIC_OVERTEMP_TRIP_C) ? 1 : 0;
+}
+
+static int Overtemp_SicReadyForRestart(void)
+{
+    return (NTC_SIC_M1A < SIC_OVERTEMP_CLEAR_C && NTC_SIC_M1B < SIC_OVERTEMP_CLEAR_C &&
+            NTC_SIC_M1C < SIC_OVERTEMP_CLEAR_C && NTC_SIC_M1A_ECAP < SIC_OVERTEMP_CLEAR_C &&
+            NTC_SIC_M1B_ECAP < SIC_OVERTEMP_CLEAR_C && NTC_SIC_M1C_ECAP < SIC_OVERTEMP_CLEAR_C);
+}
+
+static void NTC_SIC_OvertempUpdate(void)
+{
+    if (fault_SiC_overtemp == 0)
+    {
+        if (NTC_SIC_AnyPhaseOverTrip())
+        {
+            SiC_over_temp_ticker++;
+            if (SiC_over_temp_ticker >= OVERTEMP_SIC_FAULT_CONFIRM)
+            {
+                fault_SiC_overtemp = 1;
+                DTC_code1 |= FAULT_DTC_SIC_OVERTEMP;
+            }
+        }
+        else
+        {
+            SiC_over_temp_ticker = 0;
+        }
     }
     else
     {
-        over_temp_ticker = 0;
+        SiC_over_temp_ticker = 0;
     }
-    if(over_temp_ticker > 1)
-    {
-        DTC_code1 |= 0x08;
-        over_avg_temp_flag = 1;
-    }
-
 }
 
-float NTC_duty_measurement(uint16_t adcresult)
+void Overtemp_SicClearFaultsOnRestart(void)
 {
-    float duty = 0.0;
-    float pt100_duty_temp =0.0;
-    duty = adcresult/4095.0;
-    pt100_duty_temp = -471.3*duty*duty*duty+729.3*duty*duty-516.8*duty+238.8;
-    return pt100_duty_temp;
+    if (fault_SiC_overtemp == 0 && (DTC_code1 & FAULT_DTC_SIC_OVERTEMP) == 0u)
+    {
+        return;
+    }
+
+    if (!Overtemp_SicReadyForRestart())
+    {
+        return;
+    }
+
+    fault_SiC_overtemp = 0;
+    SiC_over_temp_ticker = 0;
+    DTC_code1 &= (uint16_t)~FAULT_DTC_SIC_OVERTEMP;
 }
 
-float NTC_duty_measurement80(float duty)
+/******************************************************************************
+ * SiC 后台刷新：ADC/ECAP 采样 → deg C → 三相均值 → 最热点 → 过温判定 → 电流削减
+ ******************************************************************************/
+void NTC_temp(void)
 {
-    float duty_temp =0.0;
-    float NTC_RES = 0.0;
-    float term2=0.0;
-    float term1 = 0.003354;
-    float temp_vol=0.0;
-    temp_vol=0.8*duty+0.1;
+    /* 1. 6 路相温（deg C） */
+    NTC_SIC_M1A      = NTC_SIC_AdcToTempC(M1_Temp_PhaseA_Raw);
+    NTC_SIC_M1B      = NTC_SIC_AdcToTempC(M1_Temp_PhaseB_Raw);
+    NTC_SIC_M1C      = NTC_SIC_AdcToTempC(M1_Temp_PhaseC_Raw);
+    NTC_SIC_M1A_ECAP = NTC_SIC_EcapDutyToTempC(ECAP1_duty);
+    NTC_SIC_M1B_ECAP = NTC_SIC_EcapDutyToTempC(ECAP2_duty);
+    NTC_SIC_M1C_ECAP = NTC_SIC_EcapDutyToTempC(ECAP3_duty);
 
-    NTC_RES=((330*0.8846)/(0.8846-temp_vol)-330)*0.001;
-    term2 = (1.0 / 3436) * log(NTC_RES / 5);
+    /* 2. 三相 ADC 算术均值（CAN 上报） */
+    NTC_SIC_M1_AvgC = (NTC_SIC_M1A + NTC_SIC_M1B + NTC_SIC_M1C) / 3.0f;
 
-    duty_temp = 1.0 / (term1 + term2)-273.15;
-    return duty_temp;
+    /* 3. 6 路最热温度（供电流削减） */
+    NTC_SIC_M1_HottestC = NTC_SIC_M1A;
+    if (NTC_SIC_M1B      > NTC_SIC_M1_HottestC) NTC_SIC_M1_HottestC = NTC_SIC_M1B;
+    if (NTC_SIC_M1C      > NTC_SIC_M1_HottestC) NTC_SIC_M1_HottestC = NTC_SIC_M1C;
+    if (NTC_SIC_M1A_ECAP > NTC_SIC_M1_HottestC) NTC_SIC_M1_HottestC = NTC_SIC_M1A_ECAP;
+    if (NTC_SIC_M1B_ECAP > NTC_SIC_M1_HottestC) NTC_SIC_M1_HottestC = NTC_SIC_M1B_ECAP;
+    if (NTC_SIC_M1C_ECAP > NTC_SIC_M1_HottestC) NTC_SIC_M1_HottestC = NTC_SIC_M1C_ECAP;
+
+    /* 4. 过温判定 + 电流削减更新 */
+    NTC_SIC_OvertempUpdate();
+    SicCurrentWeaken_Update();
 }
-
-
-//80NTC
-float NTC_SIC_temp5(uint16_t adcresult)
-{
-    float NTC_SIC = 0.0;
-    float NTC_RES = 0.0;
-
-    float term2=0.0;
-    float term1 = 0.003354;
-
-    NTC_RES=((330*0.8846)/(0.8846-(adcresult*3.3*ADC_PU_SCALE_FACTOR))-330)*0.001;
-
-
-    term2 = (1.0 / 3436) * log(NTC_RES / 5);
-
-    NTC_SIC = 1.0 / (term1 + term2)-273.15;
-    return NTC_SIC;
-
-}
-
-
-float NTC_SIC_temp(uint16_t adcresult)
-{
-    float NTC_SIC = 0.0;
-    if(adcresult<=2090)
-    {
-        NTC_SIC= 0.04262 * adcresult -17.33;
-    }
-    else if(adcresult<=2670)
-    {
-        NTC_SIC= 2.873e-7*adcresult*adcresult*adcresult-0.001946*adcresult*adcresult+4.449*adcresult-3350;
-    }
-    else
-    {
-        NTC_SIC = 0.001147*adcresult*adcresult-6.027*adcresult+8041;
-    }
-
-    return NTC_SIC;
-
-}
-
-float NTC_SIC_temp1(uint16_t adcresult)
-{
-    float NTC_SIC = 0.0;
-    if(adcresult<=402)
-    {
-        adcresult = 402;
-    }
-    if(adcresult<=1702)
-    {
-        NTC_SIC= 0.00002588 * adcresult * adcresult +0.01293*adcresult-7.495;
-    }
-    else if(adcresult<=1767)
-    {
-        NTC_SIC= (adcresult - 1702)/65.0*10.6+89.5;
-    }
-    else
-    {
-        NTC_SIC = 0.001394 * adcresult * adcresult - 4.805*adcresult+4238;
-    }
-
-    return NTC_SIC;
-
-}
-
-
-float NTC_SIC_temp2(uint16_t adcresult)
-{
-    float NTC_SIC = 0.0;
-    if(adcresult<=647)
-    {
-        adcresult = 647;
-    }
-    if(adcresult<=2400)
-    {
-        NTC_SIC= 0.00000513 * adcresult * adcresult +0.0221*adcresult-15.87;
-    }
-//    else if(adcresult<=1767)
-//    {
-//        NTC_SIC= (adcresult - 1702)/65.0*10.6+89.5;
-//    }
-    else
-    {
-        NTC_SIC = 0.0000003022 * adcresult * adcresult * adcresult- 0.00232*adcresult*adcresult+5.989*adcresult-5120;
-    }
-
-    return NTC_SIC;
-
-}
-
-
-float NTC_SIC_temp3(uint16_t adcresult)
-{
-    float NTC_SIC = 0.0;
-    if(adcresult<=364)
-    {
-        adcresult = 364;
-    }
-    if(adcresult<=1100)
-    {
-        NTC_SIC= 0.00005417 * adcresult * adcresult +0.010911*adcresult-9.905;
-    }
-    else if(adcresult<=1229)
-    {
-        NTC_SIC= (adcresult - 1100)/129.0*16.5+65.6;//75.6
-    }
-    else
-    {
-        NTC_SIC = 0.001376 * adcresult * adcresult - 3.271*adcresult+2022;
-    }
-
-    return NTC_SIC;
-
-}
-
-float NTC_SIC_temp4(uint16_t adcresult)
-{
-    float NTC_SIC = 0.0;
-    if(adcresult<=599)
-    {
-        adcresult = 599;
-    }
-    if(adcresult<=1800)
-    {
-        NTC_SIC= 0.00002003 * adcresult * adcresult +0.00554*adcresult-9.905;
-    }
-    else if(adcresult<=1900)
-    {
-        NTC_SIC= (adcresult - 1800)/100.0*11.6+65.0;
-    }
-    else
-    {
-        NTC_SIC = 0.0006428 * adcresult * adcresult - 2.43*adcresult+2373;
-    }
-
-    return NTC_SIC;
-
-}
-
-
-
-
-
-//int NTC_count = 0;
-int NTC_count_A1 = 0;
-int NTC_count_B1 = 0;
-int NTC_count_C1 = 0;
-int NTC_count_A2 = 0;
-int NTC_count_B2 = 0;
-int NTC_count_C2 = 0;
-
-float NTC_filter_A1(int NTC_SIC_temp_int)
-{
-    int NTC_sum = 0;
-    int NTC_count;
-    NTC_temp_buf_A1[NTC_f_i_A1] = NTC_SIC_temp_int;
-    NTC_f_i_A1++;
-
-    if(NTC_f_i_A1 == NTC_filter_buf)
-    {
-        NTC_f_i_A1 = 0;
-    }
-    for(NTC_count=0;NTC_count<NTC_filter_buf;NTC_count++)
-    {
-        NTC_sum =NTC_sum + NTC_temp_buf_A1[NTC_count];
-    }
-
-    return (float)(NTC_sum)/NTC_filter_buf;
-}
-float NTC_avg_A1_temp =0.0;
-float NTC_sum_avg_A1 = 0.0;
-float NTC_avg_A1(int NTC_SIC_temp_int)
-{
-
-//    int NTC_count;
-    NTC_temp_buf_A1[NTC_f_i_A1] = NTC_SIC_temp_int;
-    NTC_sum_avg_A1 =NTC_sum_avg_A1 + NTC_temp_buf_A1[NTC_f_i_A1];
-    NTC_f_i_A1++;
-
-    if(NTC_f_i_A1 == NTC_filter_buf)
-    {
-        NTC_f_i_A1 = 0;
-        NTC_avg_A1_temp = NTC_sum_avg_A1/NTC_filter_buf;
-        NTC_sum_avg_A1 = 0;
-    }
-    return NTC_avg_A1_temp;
-}
-
-float NTC_filter_B1(int NTC_SIC_temp_int)
-{
-    int NTC_sum = 0;
-    int NTC_count;
-    NTC_temp_buf_B1[NTC_f_i_B1] = NTC_SIC_temp_int;
-    NTC_f_i_B1++;
-
-    if(NTC_f_i_B1 == NTC_filter_buf)
-    {
-        NTC_f_i_B1 = 0;
-    }
-    for(NTC_count=0;NTC_count<NTC_filter_buf;NTC_count++)
-    {
-        NTC_sum =NTC_sum + NTC_temp_buf_B1[NTC_count];
-    }
-
-    return (float)(NTC_sum)/NTC_filter_buf;
-}
-float NTC_filter_C1(int NTC_SIC_temp_int)
-{
-    int NTC_sum = 0;
-    int NTC_count;
-    NTC_temp_buf_C1[NTC_f_i_C1] = NTC_SIC_temp_int;
-    NTC_f_i_C1++;
-
-    if(NTC_f_i_C1 == NTC_filter_buf)
-    {
-        NTC_f_i_C1 = 0;
-    }
-    for(NTC_count=0;NTC_count<NTC_filter_buf;NTC_count++)
-    {
-        NTC_sum =NTC_sum + NTC_temp_buf_C1[NTC_count];
-    }
-
-    return (float)(NTC_sum)/NTC_filter_buf;
-}
-
-float NTC_avg_A2_temp =0.0;
-float NTC_sum_avg_A2 = 0.0;
-float NTC_avg_A2(int NTC_SIC_temp_int)
-{
-
-//    int NTC_count;
-    NTC_temp_buf_A2[NTC_f_i_A2] = NTC_SIC_temp_int;
-    NTC_sum_avg_A2 =NTC_sum_avg_A2 + NTC_temp_buf_A2[NTC_f_i_A2];
-    NTC_f_i_A2++;
-
-    if(NTC_f_i_A2 == NTC_filter_buf)
-    {
-        NTC_f_i_A2 = 0;
-        NTC_avg_A2_temp = NTC_sum_avg_A2/NTC_filter_buf;
-        NTC_sum_avg_A2 = 0;
-    }
-    return NTC_avg_A2_temp;
-}
-
-float NTC_avg_B2_temp =0.0;
-float NTC_sum_avg_B2 = 0.0;
-float NTC_avg_B2(int NTC_SIC_temp_int)
-{
-
-//    int NTC_count;
-    NTC_temp_buf_B2[NTC_f_i_B2] = NTC_SIC_temp_int;
-    NTC_sum_avg_B2 =NTC_sum_avg_B2 + NTC_temp_buf_B2[NTC_f_i_B2];
-    NTC_f_i_B2++;
-
-    if(NTC_f_i_B2 == NTC_filter_buf)
-    {
-        NTC_f_i_B2 = 0;
-        NTC_avg_B2_temp = NTC_sum_avg_B2/NTC_filter_buf;
-        NTC_sum_avg_B2 = 0;
-    }
-    return NTC_avg_B2_temp;
-}
-
-float NTC_avg_C2_temp =0.0;
-float NTC_sum_avg_C2 = 0.0;
-float NTC_avg_C2(int NTC_SIC_temp_int)
-{
-
-//    int NTC_count;
-    NTC_temp_buf_C2[NTC_f_i_C2] = NTC_SIC_temp_int;
-    NTC_sum_avg_C2 =NTC_sum_avg_C2 + NTC_temp_buf_C2[NTC_f_i_C2];
-    NTC_f_i_C2++;
-
-    if(NTC_f_i_C2 == NTC_filter_buf)
-    {
-        NTC_f_i_C2 = 0;
-        NTC_avg_C2_temp = NTC_sum_avg_C2/NTC_filter_buf;
-        NTC_sum_avg_C2 = 0;
-    }
-    return NTC_avg_C2_temp;
-}
-float NTC_avg_temp =0.0;
-float NTC_sum_avg = 0.0;
-float NTC_avg(int NTC_SIC_temp_int)
-{
-
-//    int NTC_count;
-    NTC_temp_avg[NTC_f_i_avg] = NTC_SIC_temp_int;
-    NTC_sum_avg =NTC_sum_avg + NTC_temp_avg[NTC_f_i_avg];
-    NTC_f_i_avg++;
-
-    if(NTC_f_i_avg == NTC_filter_buf)
-    {
-        NTC_f_i_avg = 0;
-        NTC_avg_temp = NTC_sum_avg/NTC_filter_buf;
-        NTC_sum_avg = 0;
-    }
-    return NTC_avg_temp;
-}
-

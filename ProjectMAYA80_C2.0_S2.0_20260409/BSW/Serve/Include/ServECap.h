@@ -2,9 +2,6 @@
 #ifndef SERVECAP_H_
 #define SERVECAP_H_
 
-extern uint32_t eCAPt1,eCAPt2,eCAPT1,eCAPT2,eCAPD1,eCAPD2;
-extern int eCAPt3,eCAPt4;
-extern float TimeCap;
 extern float ECAP1_duty;
 extern float ECAP2_duty;
 extern float ECAP3_duty;

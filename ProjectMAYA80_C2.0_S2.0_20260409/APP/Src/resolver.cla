@@ -1,6 +1,4 @@
 #include "F28x_Project.h"
-// Include the test header file whose name is based on the test name
-// which is defined by the macro TEST on the command line
 #include "CLAShared.h"
 
 #include "F2837xD_gpio.h"
@@ -9,10 +7,9 @@
 #define CLA_DEBUG 0
 #define POLES_CLA   40
 float Cla_AD2SB_Test_Ticker;
-uint16_t Cla_AD2SB_Fault;
-int Cla_AD2SB_fault_ticker;
-uint32_t Cla_angle_rawB;
-float Cla_angle_tmpB;
+volatile int Cla_AD2SB_fault_ticker;
+uint32_t Cla_ResolverRaw;
+float Cla_ResolverElecTheta_tmp;
 float Cla_angle16B;
 float Cla_correct_angleB;
 uint32_t delay_count;
@@ -50,7 +47,7 @@ uint16_t Cla_AD2SB_Read(uint16_t addr){
     return rxval;
 }
 
-uint16_t Cla_AD2SB_Postion_Read(){
+uint16_t Cla_AD2SB_Position_Read(){
     uint16_t rxpos;
 
     rxpos = Cla_AD2SB_Read(0x80);
@@ -62,23 +59,18 @@ uint16_t Cla_AD2SB_Postion_Read(){
 }
 
 
-interrupt void Cla1Task1 ( void )
+__interrupt void Cla1Task1 ( void )
 {
 
-//    caltask++;
 }
-//extern float Cla_angle_tmpB111;
-//Task 2 : Calculate acos(X) using the assembly routine provided in
-// acos_asm.asm
-interrupt void Cla1Task2 ( void )
+
+__interrupt void Cla1Task2 ( void )
 {
 
-//    GpioDataRegs.GPCSET.bit.GPIO85 = 1;
-//    GpioDataRegs.GPBSET.bit.GPIO50 = 1;
         #if (CLA_DEBUG==1)
         __mdebugstop();
         #endif
-//        GpioDataRegs.GPBSET.bit.GPIO50=1;
+
         Cla_angle++;
 
         Cla_AD2SB_CS_L;
@@ -87,36 +79,27 @@ interrupt void Cla1Task2 ( void )
         Cla_AD2SB_SAMPLE_L;
         Cla_delay(1);
         Cla_AD2SB_Test_Ticker++;
-        if(Cla_AD2SB_Test_Ticker>5000)
+        if(Cla_AD2SB_Test_Ticker > 100)
         {
 
             Cla_AD2SB_Fault = Cla_AD2SB_Read(0xff);
 
-            Cla_AD2SB_Test_Ticker=0;
-            if(Cla_AD2SB_Fault!=0)
+            Cla_AD2SB_Test_Ticker = 0;
+
+            if(Cla_AD2SB_Fault != 0)
             {
                 Cla_AD2SB_fault_ticker++;
             }
         }
 
-        Cla_angle_rawB=Cla_AD2SB_Postion_Read();
+        Cla_ResolverRaw=Cla_AD2SB_Position_Read();
 
 
-        Cla_mech_angleB=((float)Cla_angle_rawB)/1.0/65536.0;//2^16     1.0??????????
-        //Cla_mech_angleB111=((float)Cla_angle_rawB)/1.0/65536.0;
+        Cla_ResolverMechTheta_pu=((float)Cla_ResolverRaw)/1.0/65536.0;//2^16
 
-        Cla_angle_tmpB=(-1.0*Cla_mech_angleB)*(POLES_CLA/2.0);
-        //Cla_angle_tmpB=(Cla_mech_angleB)*(POLES_CLA/2.0);
 
-        //Cla_angle_tmpB111=(1.0-Cla_mech_angleB111)*(POLES_CLA/2.0);
-//        Cla_angle16B=1.0+Cla_angle_tmpB+Cla_ALIGN_ANGLE;//_IQ15frac(angle_tmp);
+        Cla_ResolverElecTheta_tmp=(-1.0*Cla_ResolverMechTheta_pu)*(POLES_CLA/2.0);
 
-//        if((Cla_angle16B>=0.0)&&(Cla_angle16B<=1.0))
-//        {
-//            Cla_correct_angleB=Cla_angle16B;
-////            Eangle_resolverB=correct_angleB;
-////            M2_Eangle_resolverB =_IQ15frac(Eangle_resolverB+m2_comp);  // M2 generated angle is based on M1 and offset value is 60deg(0.166667pu)
-//        }
 
         Cla_AD2SB_SAMPLE_H;
         Cla_delay(1);
@@ -126,53 +109,36 @@ interrupt void Cla1Task2 ( void )
         Cla_delay(1);
 
         Cla_AD2SB_CS_H;
-        Cla_angleB = Cla_angle_tmpB;
-        //Cla_angleB111=Cla_angle_tmpB111;
-//        Cla_angleB = Cla_angle16B;
-
-//        GpioDataRegs.GPBCLEAR.bit.GPIO50 = 1;
+        Cla_ResolverElecTheta_pu = Cla_ResolverElecTheta_tmp;
 }
 
-interrupt void Cla1Task3 ( void )
+__interrupt void Cla1Task3 ( void )
 {
 
 }
 
-interrupt void Cla1Task4 ( void )
+__interrupt void Cla1Task4 ( void )
 {
 
 }
 
-interrupt void Cla1Task5 ( void )
+__interrupt void Cla1Task5 ( void )
 {
 
 }
 
-interrupt void Cla1Task6 ( void )
+__interrupt void Cla1Task6 ( void )
 {
 
 }
 
-interrupt void Cla1Task7 ( void )
+__interrupt void Cla1Task7 ( void )
 {
 
 }
 
-interrupt void Cla1Task8 ( void )
+__interrupt void Cla1Task8 ( void )
 {
 
 
 }
-
-
-//void cla_Dshot_In_bit(uint16_t inbit)
-//{
-//
-//  if(cla_ecapstartflag==1)
-//   {
-//      cla_dshot_rcv_buffer = (cla_dshot_rcv_buffer << 1 ) | inbit;
-//      cla_dshot_rcv_count++;
-//   }
-//
-//}
-// End of file

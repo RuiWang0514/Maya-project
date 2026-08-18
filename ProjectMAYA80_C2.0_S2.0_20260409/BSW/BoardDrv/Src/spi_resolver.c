@@ -4,8 +4,6 @@
 
 float ALIGN_offset=0.0;
 float Eangle_resolver_spi=0.0,Eangle_resolver_tmp=0.0;
-extern uint32_t BaseRpm_1,Rpm_conv;
-extern int Direction;
 extern int Error_Pos,Error_Spd;
 
 uint16_t NoB=0,SPI_data;

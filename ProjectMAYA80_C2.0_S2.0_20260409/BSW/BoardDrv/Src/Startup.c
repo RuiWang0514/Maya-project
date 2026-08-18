@@ -27,16 +27,25 @@ void ConfigureADC(void)
     ADC_Startup();
     EALLOW;
 
-    // Setting up link from EPWM to ADC
-    EPwm1Regs.ETSEL.bit.SOCASEL = ET_CTR_ZERO;
+    // Setting up link from EPWM to ADC.
+    // SOCA/SOCB use CMPB on the up-count side so all ADC sampling starts
+    // after PWM counter zero plus the configured low-side blanking delay.
+    EPwm1Regs.ETSEL.bit.SOCASEL = ET_CTRU_CMPB;
     EPwm1Regs.ETPS.bit.SOCAPRD  = ET_1ST;
     EPwm1Regs.ETSEL.bit.SOCAEN  = 1;
     EPwm1Regs.ETCLR.bit.SOCA = 1;
 
-    EPwm1Regs.ETSEL.bit.SOCBSEL = ET_CTR_ZERO;
+    EPwm1Regs.ETSEL.bit.SOCBSEL = ET_CTRU_CMPB;
     EPwm1Regs.ETPS.bit.SOCBPRD  = ET_1ST;
     EPwm1Regs.ETSEL.bit.SOCBEN  = 1;
     EPwm1Regs.ETCLR.bit.SOCB = 1;
+
+    // Prioritize SOC0 so current feedback conversions run before slower
+    // voltage, throttle, and temperature conversions triggered at the same point.
+    AdcaRegs.ADCSOCPRICTL.bit.SOCPRIORITY = 1;
+    AdcbRegs.ADCSOCPRICTL.bit.SOCPRIORITY = 1;
+    AdccRegs.ADCSOCPRICTL.bit.SOCPRIORITY = 1;
+    AdcdRegs.ADCSOCPRICTL.bit.SOCPRIORITY = 1;
 
     // M1 current A-A4 B-C4 C-B4
     AdcaRegs.ADCSOC0CTL.bit.CHSEL     = 2;
@@ -176,7 +185,7 @@ void ADC_Startup(void)
 
     // Delay >1ms for ADC power-up
     for(i = 0; i < 1000; i++){
-        asm("   RPT#255 || NOP");
+        __asm("   RPT#255 || NOP");
     }
 
     EDIS;
@@ -229,77 +238,4 @@ void CLA_initCpu1Cla1(void)
     DmaClaSrcSelRegs.CLA1TASKSRCSEL1.bit.TASK2 = CLA_TRIG_EPWM1INT;
 
     EDIS;
-}
-
-/* ========== CLA end-of-task ISR callbacks ========== */
-
-__interrupt void cla1Isr1(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr2(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr3(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr4(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr5(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr6(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr7(void)
-{
-    asm(" ESTOP0");
-}
-
-__interrupt void cla1Isr8(void)
-{
-    asm(" ESTOP0");
-}
-
-/* ========== SCI-B for telemetry serial port ========== */
-
-void Init_SCIB_GPIO(void)
-{
-    /* GPIO18 mux for SCIBTX currently disabled */
-}
-
-void Init_SCIB(void)
-{
-    ScibRegs.SCICCR.all = 0x0007;
-    ScibRegs.SCICTL1.all = 0x0003;
-    ScibRegs.SCICTL2.all = 0x0003;
-    ScibRegs.SCICTL2.bit.TXINTENA = 1;
-
-    // SCIB at 57600 baud @ LSPCLK = 50 MHz
-    ScibRegs.SCIHBAUD.all = 0x0000;
-    ScibRegs.SCILBAUD.all = 0x006C;
-
-    ScibRegs.SCICTL1.all = 0x0023;
-
-    ScibRegs.SCIFFTX.all = 0xE040;
-    ScibRegs.SCIFFRX.all = 0x2044;
-    ScibRegs.SCIFFCT.all = 0x0;
-}
-
-void Scib_xmit(int a)
-{
-    while (ScibRegs.SCIFFTX.bit.TXFFST != 0) {}
-    ScibRegs.SCITXBUF.all = a;
 }

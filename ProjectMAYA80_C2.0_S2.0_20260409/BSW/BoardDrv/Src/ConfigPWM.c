@@ -7,15 +7,10 @@ volatile struct EPWM_REGS *ePWM[] = {
         &EPwm7Regs, &EPwm8Regs, &EPwm9Regs, &EPwm10Regs, &EPwm11Regs, &EPwm12Regs};
 
 
-void PWM_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void PWM_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
+
     EALLOW;
-    // Time Base SubModule Registers
-
-//    (*ePWM[n]).TZSEL.bit.OSHT1 = 1;
-//    (*ePWM[n]).TZCTL.bit.TZA = TZ_FORCE_HI;
-//    (*ePWM[n]).TZCTL.bit.TZB = TZ_FORCE_HI;
-//    (*ePWM[n]).TZEINT.bit.OST = 1;
-
 
     (*ePWM[n]).TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
     (*ePWM[n]).TBPRD = period / 2; // up-down mode , Tpwm=2*TBPRD*Ttbclk
@@ -29,8 +24,12 @@ void PWM_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     (*ePWM[n]).TBCTL.bit.SYNCOSEL = TB_CTR_ZERO; // sync "down-stream"  027-0
 
     // Counter Compare Submodule Registers  same with 027, lack B
-    (*ePWM[n]).CMPA.bit.CMPA = 0;//(int)period/4; // set duty 0% initially
-    (*ePWM[n]).CMPB.bit.CMPB = 0;//(int)period/4; // set duty 0% initially
+    (*ePWM[n]).CMPA.bit.CMPA = 0; // set duty 0% initially
+
+    // CMPB is reserved for delayed ADC SOCA/SOCB trigger; CMPA remains
+    // the SVPWM duty compare value.
+    (*ePWM[n]).CMPB.bit.CMPB = (uint16_t)ADC_SAMPLE_DELAY_TICKS;
+
     (*ePWM[n]).CMPCTL.bit.SHDWAMODE = CC_SHADOW;
     (*ePWM[n]).CMPCTL.bit.SHDWBMODE = CC_SHADOW;
     (*ePWM[n]).CMPCTL.bit.LOADAMODE = CC_CTR_ZERO;
@@ -47,10 +46,11 @@ void PWM_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     (*ePWM[n]).DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     (*ePWM[n]).DBRED = db;
     (*ePWM[n]).DBFED = db;
+
     EDIS;
 }
 
-int test111=0;
+
 void Fault_GPIO_init(void)
 {
     EALLOW; // below registers are "protected", allow access.
@@ -67,6 +67,21 @@ void Fault_GPIO_init(void)
     GPIO_SetupPinOptions(67, GPIO_OUTPUT, GPIO_ASYNC);
     GPIO_SetupPinMux(67,0,0);
     GpioDataRegs.GPCSET.bit.GPIO67=1;
+
+    //GPIO13 --- U1-RI
+    GPIO_SetupPinOptions(13, GPIO_OUTPUT, GPIO_ASYNC);
+    GPIO_SetupPinMux(13,0,0);
+    GpioDataRegs.GPASET.bit.GPIO13=1;
+    //GPIO87 --- V1-RI
+    GPIO_SetupPinOptions(87, GPIO_OUTPUT, GPIO_ASYNC);
+    GPIO_SetupPinMux(87,0,0);
+    GpioDataRegs.GPCSET.bit.GPIO87=1;
+    //GPIO83 --- W1-RI
+    GPIO_SetupPinOptions(83, GPIO_OUTPUT, GPIO_ASYNC);
+    GPIO_SetupPinMux(83,0,0);
+    GpioDataRegs.GPCSET.bit.GPIO83=1;
+
+    DELAY_US(10);
 
     //GPIO13 --- U1-RI
     GPIO_SetupPinOptions(13, GPIO_OUTPUT, GPIO_ASYNC);
@@ -88,75 +103,40 @@ void Fault_GPIO_init(void)
     GpioDataRegs.GPCSET.bit.GPIO76=1;
     GpioDataRegs.GPCSET.bit.GPIO77=1;
 
-
     EDIS;
 }
 
-void Fault_GPIO_Stateinit(void)
+void GateDriver_EnableOutputs(void)
 {
 
-//    //GPIO79 --- U1-LE
-//    GPIO_SetupPinOptions(79, GPIO_OUTPUT, GPIO_ASYNC);
-//    GPIO_SetupPinMux(79,0,0);
-//    GpioDataRegs.GPCSET.bit.GPIO79=1;
-//    //GPIO82 --- V1-LE
-//    GPIO_SetupPinOptions(82, GPIO_OUTPUT, GPIO_ASYNC);
-//    GPIO_SetupPinMux(82,0,0);
-//    GpioDataRegs.GPCSET.bit.GPIO82=1;
-//    //GPIO81 --- W1-LE
-//    GPIO_SetupPinOptions(81, GPIO_OUTPUT, GPIO_ASYNC);
-//    GPIO_SetupPinMux(81,0,0);
-//    GpioDataRegs.GPCSET.bit.GPIO81=1;
-
-    GpioDataRegs.GPACLEAR.bit.GPIO8=1;
-//    CLR_U1_RI;
-//    SET_U1_LE;
-//    SET_U1_PS;
-//
-//    CLR_V1_RI;
-//    SET_V1_LE;
-//    SET_V1_PS;
-//
-//    CLR_W1_RI;
-//    SET_W1_LE;
-//    SET_W1_PS;
-
-//    CLR_U2_RI;
-//    SET_U2_LE;
-//    SET_U2_PS;
-//
-//    CLR_V2_RI;
-//    SET_V2_LE;
-//    SET_V2_PS;
-//
-//    CLR_W2_RI;
-//    SET_W2_LE;
-//    SET_W2_PS;
+    GpioDataRegs.GPACLEAR.bit.GPIO8 = 1;
 
 }
 
 void Cla_GPIO_Init(void)
 {
     EALLOW;
+
     GpioCtrlRegs.GPCCSEL1.bit.GPIO65 = 0x1;
     GpioCtrlRegs.GPBCSEL4.bit.GPIO59 = 0x1;
     GpioCtrlRegs.GPCCSEL1.bit.GPIO64 = 0x1;
 
-    //GpioCtrlRegs.GPBCSEL3.bit.GPIO50 = 0x1;
-
     EDIS;
-
-
 }
 
 void InitTZGpio(void)
 {
     EALLOW;
 
+    GPIO_SetupPinOptions(92, GPIO_INPUT, GPIO_ASYNC);//TZ Fault
+
+    EDIS;
+
+    EALLOW;
+
     GpioCtrlRegs.GPCPUD.bit.GPIO92 = 0;
     GpioCtrlRegs.GPCQSEL2.bit.GPIO92 = 3;
-
-     InputXbarRegs.INPUT1SELECT = 92;       // Set TZ1 source to GPIO-pin
+    InputXbarRegs.INPUT1SELECT = 92;       // Set TZ1 source to GPIO-pin
 
     EDIS;
 }
@@ -164,6 +144,7 @@ void InitTZGpio(void)
 void InitFaultGpio(void)
 {
     EALLOW;
+
     GPIO_SetupPinOptions(10, GPIO_INPUT, GPIO_ASYNC);//U_Dr_Faulut_C
     GPIO_SetupPinOptions(94, GPIO_INPUT, GPIO_ASYNC);//V_Dr_Faulut_C
     GPIO_SetupPinOptions(93, GPIO_INPUT, GPIO_ASYNC);//W_Dr_Faulut_C
@@ -172,7 +153,7 @@ void InitFaultGpio(void)
     GPIO_SetupPinOptions(85, GPIO_INPUT, GPIO_ASYNC);//V_Dr_Ready_C
     GPIO_SetupPinOptions(86, GPIO_INPUT, GPIO_ASYNC);//W_Dr_Ready_C
 
-    GPIO_SetupPinOptions(88, GPIO_INPUT, GPIO_ASYNC);//Ready_S1鏂板鐨�
+    GPIO_SetupPinOptions(88, GPIO_INPUT, GPIO_ASYNC);//Ready_S1
 
     GPIO_SetupPinOptions(48, GPIO_INPUT, GPIO_ASYNC);//Fault DC meas_C
 
@@ -187,21 +168,21 @@ void InitFaultGpio(void)
 void InitDigitalGPIO(void)
 {
     EALLOW;
-    GPIO_SetupPinOptions(THROTTLE_SW_GPIO, GPIO_INPUT, GPIO_ASYNC);
-    GPIO_SetupPinMux(THROTTLE_SW_GPIO, 0, 0);
+
+    GPIO_SetupPinOptions(RE38_THROTTLE_SW_GPIO, GPIO_INPUT, GPIO_ASYNC);
+
+    GPIO_SetupPinMux(RE38_THROTTLE_SW_GPIO, 0, 0);
+
     EDIS;
 }
 
 void Configure_PWM(void)
 {
     EALLOW;
+
     GPIO_SetupPinOptions(8, GPIO_OUTPUT, GPIO_ASYNC);
     GPIO_SetupPinMux(8,0,0);
-    GpioDataRegs.GPASET.bit.GPIO8=1;
-
-    EPwm1Regs.TZSEL.bit.OSHT1 = 1;
-    EPwm2Regs.TZSEL.bit.OSHT1 = 1;
-    EPwm3Regs.TZSEL.bit.OSHT1 = 1;
+    GpioDataRegs.GPASET.bit.GPIO8 = 1;
 
     PWM_1ch_UpDwnCnt_CNF(1,INV_PWM_TICKS,DEAD_TIME);
     PWM_1ch_UpDwnCnt_CNF(2,INV_PWM_TICKS,DEAD_TIME);
@@ -209,15 +190,36 @@ void Configure_PWM(void)
 
     EDIS;
 
-
+    // Default PWM state is hardware-safe: all M1 phase outputs are forced low
+    // by Trip Zone before the PWM pins are connected to the gate drivers.
     EALLOW;
+
+    EPwm1Regs.TZSEL.bit.OSHT1 = 1;
+    EPwm2Regs.TZSEL.bit.OSHT1 = 1;
+    EPwm3Regs.TZSEL.bit.OSHT1 = 1;
+
+    EPWM_M1_PhaseA_Regs.TZCTL.bit.TZA = TZ_FORCE_LO;
+    EPWM_M1_PhaseA_Regs.TZCTL.bit.TZB = TZ_FORCE_LO;
+    EPWM_M1_PhaseB_Regs.TZCTL.bit.TZA = TZ_FORCE_LO;
+    EPWM_M1_PhaseB_Regs.TZCTL.bit.TZB = TZ_FORCE_LO;
+    EPWM_M1_PhaseC_Regs.TZCTL.bit.TZA = TZ_FORCE_LO;
+    EPWM_M1_PhaseC_Regs.TZCTL.bit.TZB = TZ_FORCE_LO;
+
+    EPWM_M1_PhaseA_Regs.TZFRC.bit.OST = 0x1;
+    EPWM_M1_PhaseB_Regs.TZFRC.bit.OST = 0x1;
+    EPWM_M1_PhaseC_Regs.TZFRC.bit.OST = 0x1;
+
+    EDIS;
+    /*End TZ Force low*/
+
     // configure 2 and 3 as slaves
+    EALLOW;
+
     EPwm1Regs.TBCTL.bit.SYNCOSEL = TB_CTR_ZERO;  //0x0 EPWMxSYNC
     EPwm1Regs.TBCTL.bit.PHSEN    = TB_DISABLE;
     EPwm1Regs.TBPHS.bit.TBPHS    = 0;
     EPwm1Regs.TBCTL.bit.PHSDIR   = TB_DOWN;
     EPwm1Regs.TBCTL.bit.FREE_SOFT = 0x11;
-    //    EPwm1Regs.TBCTL.bit.PHSDIR   = TB_UP;
 
     EPwm2Regs.TBCTL.bit.SYNCOSEL = TB_SYNC_IN;
     EPwm2Regs.TBCTL.bit.PHSEN    = TB_ENABLE;
@@ -232,6 +234,7 @@ void Configure_PWM(void)
     EPwm3Regs.TBCTL.bit.FREE_SOFT = 0x11;
 
     EDIS;
+
     // ***********************************
     // Set up GPIOs for PWM functions
     // **************************************
@@ -242,7 +245,8 @@ void Configure_PWM(void)
 }
 
 
-void EPWM1_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void EPWM1_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
     EALLOW;
         // Time Base SubModule Registers
     EPwm1Regs.TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
@@ -275,11 +279,13 @@ void EPWM1_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     EPwm1Regs.DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     EPwm1Regs.DBRED = db;
     EPwm1Regs.DBFED = db;
+
     EDIS;
 }
 
 
-void EPWM2_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void EPWM2_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
     EALLOW;
         // Time Base SubModule Registers
     EPwm2Regs.TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
@@ -312,10 +318,12 @@ void EPWM2_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     EPwm2Regs.DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     EPwm2Regs.DBRED = db;
     EPwm2Regs.DBFED = db;
+
     EDIS;
 }
 
-void EPWM3_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void EPWM3_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
     EALLOW;
         // Time Base SubModule Registers
     EPwm3Regs.TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
@@ -348,10 +356,12 @@ void EPWM3_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     EPwm3Regs.DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     EPwm3Regs.DBRED = db;
     EPwm3Regs.DBFED = db;
+
     EDIS;
 }
 
-void EPWM4_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void EPWM4_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
     EALLOW;
         // Time Base SubModule Registers
     EPwm4Regs.TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
@@ -384,10 +394,12 @@ void EPWM4_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     EPwm4Regs.DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     EPwm4Regs.DBRED = db;
     EPwm4Regs.DBFED = db;
+
     EDIS;
 }
 
-void EPWM5_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void EPWM5_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
     EALLOW;
         // Time Base SubModule Registers
     EPwm5Regs.TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
@@ -420,10 +432,12 @@ void EPWM5_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     EPwm5Regs.DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     EPwm5Regs.DBRED = db;
     EPwm5Regs.DBFED = db;
+
     EDIS;
 }
 
-void EPWM6_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
+void EPWM6_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db)
+{
     EALLOW;
         // Time Base SubModule Registers
     EPwm6Regs.TBCTL.bit.PRDLD = TB_IMMEDIATE; // set Immediate load same 027
@@ -456,6 +470,7 @@ void EPWM6_1ch_UpDwnCnt_CNF(int16_t n, uint16_t period, int16_t db) {
     EPwm6Regs.DBCTL.bit.POLSEL   = DB_ACTV_HIC;
     EPwm6Regs.DBRED = db;
     EPwm6Regs.DBFED = db;
+
     EDIS;
 }
 
