@@ -1,6 +1,0 @@
-#ifndef USER_BACKGROUNDTASK_H_
-#define USER_BACKGROUNDTASK_H_
-
-
-
-#endif /* USER_BACKGROUNDTASK_H_ */
